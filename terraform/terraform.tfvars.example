@@ -1,0 +1,6 @@
+project_id                 = "your-customer-gcp-project-id"
+region                     = "asia-northeast3"
+vertex_location            = "global"
+service_name               = "html-to-pptx-mcp"
+allow_unauthenticated      = true
+register_local_antigravity = true

@@ -1,0 +1,27 @@
+[project]
+name = "html-to-pptx-mcp"
+version = "1.0.0"
+description = "Standalone MCP Server & Skill for converting HTML presentations into 100% editable 16:9 PowerPoint (.pptx) decks"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.2.0",
+    "python-pptx>=1.0.2",
+    "lxml>=5.0.0",
+    "websockets>=13.0",
+    "pydantic>=2.7.0",
+    "google-genai>=1.0.0",
+    "python-dotenv>=1.0.1",
+    "pillow>=10.0.0",
+]
+
+[project.scripts]
+html-to-pptx-mcp = "app.mcp_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
