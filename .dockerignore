@@ -7,3 +7,6 @@ captures/
 .git/
 terraform/.terraform/
 terraform/*.tfstate*
+assets/fonts/
+*.otf
+*.ttf

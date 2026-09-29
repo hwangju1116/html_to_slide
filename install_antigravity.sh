@@ -26,6 +26,39 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# 0. Verify GCP Account Authentication (Shared Skill Access Gate)
+if [[ -z "${REMOTE_URL}" ]]; then
+  if ! command -v gcloud >/dev/null 2>&1; then
+    echo "❌ Error: 'gcloud' CLI가 설치되어 있지 않습니다. 이 공유 스킬은 GCP 계정이 있는 사용자만 사용할 수 있습니다."
+    exit 1
+  fi
+
+  ACTIVE_ACCOUNT="$(gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | head -n 1 || true)"
+  ADC_FILE="${CLOUDSDK_CONFIG:-${HOME}/.config/gcloud}/application_default_credentials.json"
+  if [[ -z "${ACTIVE_ACCOUNT}" ]] && [[ ! -f "${ADC_FILE}" ]]; then
+    echo "❌ Error: 로그인된 GCP 계정이 없습니다. 먼저 아래 명령어로 GCP 계정에 로그인해 주세요:"
+    echo "   gcloud auth login"
+    echo "   gcloud auth application-default login"
+    exit 1
+  fi
+
+  echo "🔐 Verified GCP Account: ${ACTIVE_ACCOUNT:-ADC}"
+fi
+
+# Ensure Pretendard fonts are cached locally in ~/.local/share/fonts/pretendard for 1:1 HTML font compatibility
+LOCAL_PRETENDARD_DIR="${HOME}/.local/share/fonts/pretendard"
+if [[ ! -f "${LOCAL_PRETENDARD_DIR}/Pretendard-Regular.otf" ]] && command -v curl >/dev/null 2>&1; then
+  echo "[Fonts] Downloading official Pretendard fonts for 1:1 HTML rendering compatibility..."
+  mkdir -p "${LOCAL_PRETENDARD_DIR}"
+  for w in Regular Medium SemiBold Bold ExtraBold Black; do
+    curl -fsSL "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/public/static/Pretendard-${w}.otf" \
+      -o "${LOCAL_PRETENDARD_DIR}/Pretendard-${w}.otf" 2>/dev/null || true
+  done
+  if command -v fc-cache >/dev/null 2>&1; then
+    fc-cache -f "${LOCAL_PRETENDARD_DIR}" >/dev/null 2>&1 || true
+  fi
+fi
+
 CONFIG_DIR="${HOME}/.gemini/config"
 mkdir -p "${CONFIG_DIR}/plugins" "${CONFIG_DIR}/skills"
 
@@ -54,6 +87,12 @@ else
     if [[ "${DETECTED_PROJECT}" == "(unset)" ]]; then
       DETECTED_PROJECT=""
     fi
+  fi
+
+  if [[ -z "${DETECTED_PROJECT}" ]]; then
+    echo "❌ Error: GCP Project ID를 찾을 수 없습니다. 본인 GCP 프로젝트 ID를 지정해 주세요:"
+    echo "   ./install_antigravity.sh --project YOUR_GCP_PROJECT_ID"
+    exit 1
   fi
 
   # Ensure local virtual environment exists
@@ -124,4 +163,3 @@ print(f"[3/3] Registered 'html-to-pptx' MCP server in {global_path}")
 PY
 
 echo "✅ Done! Restart Antigravity or reload window to use the 'html-to-pptx' Skill & MCP tools globally."
-

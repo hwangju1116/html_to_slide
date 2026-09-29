@@ -128,14 +128,17 @@ def _find_free_port() -> int:
 
 
 def _get_font_path(font_filename: str) -> str:
-  """Resolves the font path from package assets or local share."""
-  p1 = os.path.join(FONTS_DIR, font_filename)
-  if os.path.exists(p1):
-    return p1
-  p2 = os.path.join(FALLBACK_FONTS_DIR, font_filename)
-  if os.path.exists(p2):
-    return p2
-  return p1
+  """Resolves the font path from package assets, local user font cache, or container font cache."""
+  candidates = [
+      os.path.join(FONTS_DIR, font_filename),
+      os.path.join(FALLBACK_FONTS_DIR, "pretendard", font_filename),
+      os.path.join(FALLBACK_FONTS_DIR, font_filename),
+      os.path.join("/usr/local/share/fonts/pretendard", font_filename),
+  ]
+  for candidate in candidates:
+    if os.path.exists(candidate):
+      return candidate
+  return candidates[0]
 
 
 def _tag_slide_ids_in_html(html_str: str) -> tuple[str, List[str]]:
@@ -242,11 +245,18 @@ def _prepare_slide_html(
 
   html = re.sub(r'src=["\']([^"\']+)["\']', fix_src, html)
 
-  # 3. Resolve fonts
+  # 3. Resolve fonts (official Pretendard + Noto Sans KR fallbacks)
   regular_font = _get_font_path("NotoSansKR-Regular.otf")
   medium_font = _get_font_path("NotoSansKR-Medium.otf")
   bold_font = _get_font_path("NotoSansKR-Bold.otf")
   black_font = _get_font_path("NotoSansKR-Black.otf")
+
+  pret_reg = _get_font_path("Pretendard-Regular.otf")
+  pret_med = _get_font_path("Pretendard-Medium.otf")
+  pret_semi = _get_font_path("Pretendard-SemiBold.otf")
+  pret_bold = _get_font_path("Pretendard-Bold.otf")
+  pret_xbold = _get_font_path("Pretendard-ExtraBold.otf")
+  pret_black = _get_font_path("Pretendard-Black.otf")
 
   # 4. Normalize slide IDs across diverse deck formats
   html, _ = _tag_slide_ids_in_html(html)
@@ -325,38 +335,68 @@ def _prepare_slide_html(
     }}
     """
 
-  font_face_css = ""
-  if os.path.exists(regular_font):
-    font_face_css = f"""
+  reg_url = f", url('file://{regular_font}') format('opentype')" if os.path.exists(regular_font) else ""
+  med_url = f", url('file://{medium_font}') format('opentype')" if os.path.exists(medium_font) else reg_url
+  bold_url = f", url('file://{bold_font}') format('opentype')" if os.path.exists(bold_font) else reg_url
+  black_url = f", url('file://{black_font}') format('opentype')" if os.path.exists(black_font) else bold_url
+
+  p_reg_url = f", url('file://{pret_reg}') format('opentype')" if os.path.exists(pret_reg) else reg_url
+  p_med_url = f", url('file://{pret_med}') format('opentype')" if os.path.exists(pret_med) else med_url
+  p_semi_url = f", url('file://{pret_semi}') format('opentype')" if os.path.exists(pret_semi) else p_med_url
+  p_bold_url = f", url('file://{pret_bold}') format('opentype')" if os.path.exists(pret_bold) else bold_url
+  p_xbold_url = f", url('file://{pret_xbold}') format('opentype')" if os.path.exists(pret_xbold) else p_bold_url
+  p_black_url = f", url('file://{pret_black}') format('opentype')" if os.path.exists(pret_black) else black_url
+
+  font_face_css = f"""
     @font-face {{
         font-family: 'Pretendard';
         font-weight: 400;
-        src: local('Pretendard'), url('file://{regular_font}') format('opentype');
+        src: local('Pretendard'), local('Pretendard Regular'){p_reg_url}, local('Noto Sans KR'), local('Noto Sans CJK KR'), local('Noto Sans Korean'), local('Apple SD Gothic Neo'), local('Malgun Gothic');
+    }}
+    @font-face {{
+        font-family: 'Pretendard';
+        font-weight: 500;
+        src: local('Pretendard Medium'){p_med_url}, local('Noto Sans KR Medium'), local('Noto Sans CJK KR Medium'), local('Noto Sans Korean Medium'), local('Apple SD Gothic Neo'), local('Malgun Gothic');
+    }}
+    @font-face {{
+        font-family: 'Pretendard';
+        font-weight: 600;
+        src: local('Pretendard SemiBold'){p_semi_url}, local('Pretendard Medium'), local('Noto Sans KR Medium'), local('Noto Sans CJK KR Medium'), local('Apple SD Gothic Neo Bold'), local('Malgun Gothic Bold');
     }}
     @font-face {{
         font-family: 'Pretendard';
         font-weight: 700;
-        src: local('Pretendard Bold'), url('file://{bold_font}') format('opentype');
+        src: local('Pretendard Bold'){p_bold_url}, local('Noto Sans KR Bold'), local('Noto Sans CJK KR Bold'), local('Noto Sans Korean Bold'), local('Apple SD Gothic Neo Bold'), local('Malgun Gothic Bold');
+    }}
+    @font-face {{
+        font-family: 'Pretendard';
+        font-weight: 800;
+        src: local('Pretendard ExtraBold'){p_xbold_url}, local('Pretendard Bold'), local('Noto Sans KR Bold'), local('Noto Sans CJK KR Bold');
+    }}
+    @font-face {{
+        font-family: 'Pretendard';
+        font-weight: 900;
+        src: local('Pretendard Black'){p_black_url}, local('Noto Sans KR Black'), local('Noto Sans CJK KR Black');
     }}
     @font-face {{
         font-family: 'Noto Sans KR';
         font-weight: 400;
-        src: local('Noto Sans KR'), url('file://{regular_font}') format('opentype');
+        src: local('Noto Sans KR'), local('Noto Sans CJK KR'), local('Noto Sans Korean'){reg_url}, local('Pretendard'), local('Apple SD Gothic Neo'), local('Malgun Gothic');
     }}
     @font-face {{
         font-family: 'Noto Sans KR';
         font-weight: 500;
-        src: local('Noto Sans KR Medium'), url('file://{medium_font}') format('opentype');
+        src: local('Noto Sans KR Medium'), local('Noto Sans CJK KR Medium'), local('Noto Sans Korean Medium'){med_url}, local('Pretendard Medium'), local('Apple SD Gothic Neo'), local('Malgun Gothic');
     }}
     @font-face {{
         font-family: 'Noto Sans KR';
         font-weight: 700;
-        src: local('Noto Sans KR Bold'), url('file://{bold_font}') format('opentype');
+        src: local('Noto Sans KR Bold'), local('Noto Sans CJK KR Bold'), local('Noto Sans Korean Bold'){bold_url}, local('Pretendard Bold'), local('Apple SD Gothic Neo Bold'), local('Malgun Gothic Bold');
     }}
     @font-face {{
         font-family: 'Noto Sans KR';
         font-weight: 900;
-        src: local('Noto Sans KR Black'), url('file://{black_font}') format('opentype');
+        src: local('Noto Sans KR Black'), local('Noto Sans CJK KR Black'), local('Noto Sans Korean Black'){black_url}, local('Pretendard Black'), local('Apple SD Gothic Neo Bold'), local('Malgun Gothic Bold');
     }}
     """
 
@@ -377,7 +417,7 @@ def _prepare_slide_html(
         margin: 0 !important;
         padding: 0 !important;
         overflow: hidden !important;
-        font-family: 'Pretendard', 'Noto Sans KR', 'Noto Sans Korean', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        font-family: 'Pretendard', 'Noto Sans KR', 'Noto Sans CJK KR', 'Noto Sans Korean', 'Apple SD Gothic Neo', 'Malgun Gothic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         -webkit-font-smoothing: antialiased;
     }}
     header:not(.slide-header), footer:not(.slide-footer), nav, .chrome, .tabs, .stage-controls, .controls-footer, #dots-container, #prev-btn, #next-btn, #slide-counter, #btn-ratio, #btn-notes, #counter {{
@@ -2296,6 +2336,35 @@ def extract_global_design_tokens(
       tokens["text_muted_hex"] = css_vars["--text-muted"]
     elif "--muted" in css_vars:
       tokens["text_muted_hex"] = css_vars["--muted"]
+
+    # Detect primary font-family declared in HTML so PPTX matches HTML typography
+    font_match = re.search(
+        r"(?:body|html|\.slide)\s*\{[^}]*font-family\s*:\s*([^;\}]+)",
+        raw_html,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not font_match:
+      font_match = re.search(
+          r"font-family\s*:\s*([^;\}]+)", raw_html, re.IGNORECASE
+      )
+    if font_match:
+      raw_families = [
+          f.strip().strip("'\"")
+          for f in font_match.group(1).split(",")
+          if f.strip()
+      ]
+      generic_families = {
+          "sans-serif",
+          "serif",
+          "monospace",
+          "system-ui",
+          "-apple-system",
+          "blinkmacsystemfont",
+      }
+      for fam in raw_families:
+        if fam.lower() not in generic_families and not fam.startswith("var("):
+          tokens["font_name"] = fam
+          break
 
     # Detect dark theme and guarantee readable text defaults
     bg_tuple = _hex_to_rgb_tuple(tokens.get("bg_color_hex", "#FFFFFF"), (255, 255, 255))

@@ -66,6 +66,84 @@ def resolve_gcp_project(explicit_project: Optional[str] = None) -> str:
     return ""
 
 
+def verify_gcp_auth(explicit_project: Optional[str] = None) -> tuple[bool, str, str]:
+    """Verifies that the caller has an authenticated GCP account (ADC or gcloud) and a valid GCP project ID.
+
+    Returns:
+        (is_valid, project_id, error_message)
+    """
+    configure_vertex_environment()
+    project_id = resolve_gcp_project(explicit_project)
+    if not project_id:
+        return (
+            False,
+            "",
+            (
+                "GCP Project ID가 설정되어 있지 않습니다. 이 공유 스킬은 GCP 계정이 있는 사용자만 사용할 수 있습니다.\n"
+                "터미널에서 아래 명령어를 실행한 뒤 다시 시도해 주세요:\n"
+                "  1) gcloud auth login\n"
+                "  2) gcloud auth application-default login\n"
+                "  3) ./install_antigravity.sh --project YOUR_GCP_PROJECT_ID"
+            ),
+        )
+
+    # 1. Cloud Run environment (runs under dedicated GCP Service Account)
+    if os.environ.get("K_SERVICE"):
+        return True, project_id, ""
+
+    # 2. Check Application Default Credentials file or google.auth
+    gcloud_dir = os.environ.get(
+        "CLOUDSDK_CONFIG", os.path.expanduser("~/.config/gcloud")
+    )
+    adc_file = os.environ.get(
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        os.path.join(gcloud_dir, "application_default_credentials.json"),
+    )
+    if os.path.isfile(adc_file):
+        return True, project_id, ""
+
+    try:
+        import google.auth
+
+        creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        if creds is not None:
+            return True, project_id, ""
+    except Exception:
+        pass
+
+    # 3. Fallback: check active gcloud CLI authenticated account
+    try:
+        account = subprocess.check_output(
+            [
+                "gcloud",
+                "auth",
+                "list",
+                "--filter=status:ACTIVE",
+                "--format=value(account)",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=3,
+        ).strip()
+        if account:
+            return True, project_id, ""
+    except Exception:
+        pass
+
+    return (
+        False,
+        project_id,
+        (
+            f"인증된 GCP 계정을 찾을 수 없습니다 (Project: {project_id}).\n"
+            "이 공유 스킬은 GCP 계정 인증이 완료된 사용자만 사용할 수 있습니다. 터미널에서 아래 명령어를 실행해 주세요:\n"
+            "  gcloud auth login\n"
+            "  gcloud auth application-default login"
+        ),
+    )
+
+
 def get_genai_client(
     project: Optional[str] = None,
     location: Optional[str] = None,
@@ -93,6 +171,7 @@ def get_genai_client(
         return genai.Client(**kwargs)
     except Exception:
         return genai.Client()
+
 
 
 

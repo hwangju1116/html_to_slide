@@ -23,6 +23,7 @@ load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 from app.genai_client import (
     configure_vertex_environment,
     resolve_gcp_project,
+    verify_gcp_auth,
 )
 
 configure_vertex_environment()
@@ -156,6 +157,14 @@ def convert_html_to_pptx_mcp(
     Returns:
         JSON string containing status, slide_count, output_pptx_path, download_url, and preview_image_paths.
     """
+    auth_ok, _, auth_err = verify_gcp_auth()
+    if not auth_ok:
+        return json.dumps(
+            {"status": "error", "error": auth_err},
+            ensure_ascii=False,
+            indent=2,
+        )
+
     resolved_input = _resolve_path(html_input_path)
 
     if not _is_raw_html(resolved_input) and not os.path.exists(resolved_input):
@@ -232,6 +241,14 @@ def capture_html_slides_mcp(
     Returns:
         JSON string containing status, slide_count, image_paths, and download_urls of the captured 16:9 PNG slides.
     """
+    auth_ok, _, auth_err = verify_gcp_auth()
+    if not auth_ok:
+        return json.dumps(
+            {"status": "error", "error": auth_err},
+            ensure_ascii=False,
+            indent=2,
+        )
+
     resolved_input = _resolve_path(html_input_path)
     if not _is_raw_html(resolved_input) and not os.path.exists(resolved_input):
         return json.dumps(
@@ -296,6 +313,14 @@ def recreate_editable_slide_mcp(
     Returns:
         JSON string containing status, output_pptx_path, download_url, preview_html_path, and fidelity_score.
     """
+    auth_ok, _, auth_err = verify_gcp_auth()
+    if not auth_ok:
+        return json.dumps(
+            {"status": "error", "error": auth_err},
+            ensure_ascii=False,
+            indent=2,
+        )
+
     if image_path.startswith("data:image/"):
         header, b64_data = image_path.split(",", 1)
         ext = ".jpg" if "jpeg" in header or "jpg" in header else ".png"
