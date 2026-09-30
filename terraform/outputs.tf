@@ -18,7 +18,7 @@ output "mcp_config_json_snippet" {
   value = jsonencode({
     mcpServers = {
       "html-to-pptx" = {
-        serverUrl = "${google_cloud_run_v2_service.mcp_server.uri}/sse"
+        url = "${google_cloud_run_v2_service.mcp_server.uri}/sse"
       }
     }
   })

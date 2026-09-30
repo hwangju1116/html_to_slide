@@ -55,7 +55,7 @@ Or by adding `serverUrl` directly to `~/.gemini/config/mcp_config.json`:
 {
   "mcpServers": {
     "html-to-pptx": {
-      "serverUrl": "https://html-to-pptx-mcp-xxxxx.asia-northeast3.run.app/sse"
+      "url": "https://html-to-pptx-mcp-xxxxx.asia-northeast3.run.app/sse"
     }
   }
 }

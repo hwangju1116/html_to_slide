@@ -82,10 +82,10 @@ resource "terraform_data" "cloud_build_image" {
 
 # 5. Deploy Cloud Run v2 Service
 resource "google_cloud_run_v2_service" "mcp_server" {
-  project  = var.project_id
-  name     = var.service_name
-  location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  project             = var.project_id
+  name                = var.service_name
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
   deletion_protection = false
 
   template {

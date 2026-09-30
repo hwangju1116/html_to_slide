@@ -74,7 +74,7 @@ if [[ -n "${REMOTE_URL}" ]]; then
 {
   "mcpServers": {
     "html-to-pptx": {
-      "serverUrl": "${REMOTE_URL}"
+      "url": "${REMOTE_URL}"
     }
   }
 }
