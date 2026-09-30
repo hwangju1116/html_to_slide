@@ -405,8 +405,9 @@ def recreate_editable_slide_mcp(
 def main():
     """CLI entrypoint for running the MCP server over stdio (local) or SSE / HTTP (Cloud Run)."""
     parser = argparse.ArgumentParser(description="HTML-to-PPTX MCP Server")
-    default_transport = os.environ.get("MCP_TRANSPORT", "streamable-http" if os.environ.get("K_SERVICE") else "stdio") or os.environ.get("MCP_TRANSPORT") == "sse"
-        else os.environ.get("MCP_TRANSPORT", "stdio")
+    default_transport = os.environ.get(
+        "MCP_TRANSPORT",
+        "streamable-http" if os.environ.get("K_SERVICE") else "stdio",
     )
     parser.add_argument(
         "--transport",
