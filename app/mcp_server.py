@@ -135,7 +135,7 @@ def _reload_converter_modules():
     import app.schemas as _m1
     import app.color_utils as _m2
     import app.js_geometry_extractor as _m3
-    import app.chrome_capturer as _m4
+    import app.browser_renderer as _m4
     import app.pptx_native_builders as _m5
     import app.vision_fallback_builder as _m6
     import app.html_to_pptx_converter as _conv_mod

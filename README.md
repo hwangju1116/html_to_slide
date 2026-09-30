@@ -4,35 +4,14 @@ Standalone MCP Server and Antigravity Skill package that converts single-slide o
 
 Supports **both** **Remote Cloud Run (`SSE`) deployment** (automated via Terraform into any customer/team GCP project) and **Local (`stdio`) execution** (with automatic `gcloud` project detection).
 
-## Directory Structure
+## How It Works
 
-```text
-html-to-pptx-mcp/
-├── Dockerfile                      # Cloud Run container (Headless Chromium + Pretendard fonts)
-├── pyproject.toml                  # Standalone Python package metadata & dependencies
-├── plugin.json                     # Antigravity Plugin manifest
-├── mcp_config.json                 # MCP Server configuration (stdio or remote serverUrl)
-├── install_antigravity.sh          # One-step global installer (~/.gemini/config)
-├── terraform/                      # Automated Cloud Run + IAM + Artifact Registry provisioning
-│   ├── versions.tf
-│   ├── variables.tf
-│   ├── main.tf
-│   ├── outputs.tf
-│   └── terraform.tfvars.example
-├── assets/                         # Bundled Pretendard fonts & Tailwind CSS runtime
-├── skills/
-│   └── html-to-pptx/
-│       └── SKILL.md                # Antigravity Skill definition bound to MCP tools
-└── app/
-    ├── __init__.py
-    ├── mcp_server.py               # FastMCP stdio + SSE server & /downloads/{file} endpoint
-    ├── html_to_pptx_converter.py   # Live Chromium 16:9 DOM geometry & PPTX vector builder
-    ├── slide_digitizer.py          # Gemini 3.8 Flash 1:1 image-to-slide digitizer
-    ├── slide_fidelity_critic.py    # Structural & multimodal fidelity verification
-    ├── color_utils.py
-    ├── genai_client.py             # Auto-resolves active GCP project via env or gcloud CLI
-    └── schemas.py
-```
+Instead of pasting static screenshots, `html-to-pptx-mcp` converts HTML slides into **editable PowerPoint elements**:
+
+1. **Browser Rendering**: Opens the HTML in a 16:9 headless browser to apply fonts, CSS layouts, and charts.
+2. **Layout & Style Extraction**: Reads the position, colors, tables, and chart data of every element on the slide.
+3. **Native PPTX Generation**: Converts cards into PPT shapes, `<canvas>` charts into PPT charts, `<table>` into PPT tables, and text into editable text boxes.
+4. **Layout Polish**: Automatically adjusts layer order and spacing to prevent overlapping elements.
 
 ---
 
@@ -93,14 +72,6 @@ chmod +x install_antigravity.sh
 ./install_antigravity.sh --project YOUR_GCP_PROJECT_ID
 ```
 *(If `--project` is omitted, `install_antigravity.sh` automatically uses `gcloud config get-value project`.)*
-
----
-
-## Exposed MCP Tools
-
-- `convert_html_to_pptx_mcp(html_input_path, output_pptx_path=None, target_slide_id=None, native_mode=True)`
-- `capture_html_slides_mcp(html_input_path, output_dir=None, target_slide_id=None)`
-- `recreate_editable_slide_mcp(image_path, output_pptx_path=None)`
 
 ---
 

@@ -8,7 +8,7 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches
 
-from app.chrome_capturer import (
+from app.browser_renderer import (
     FALLBACK_FONTS_DIR,
     FONTS_DIR,
     _capture_slides_cdp,
