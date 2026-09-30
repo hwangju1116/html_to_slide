@@ -129,6 +129,22 @@ def _stage_for_download(local_file_path: str) -> tuple[str, Optional[str]]:
     return staged_name, f"/downloads/{staged_name}"
 
 
+def _reload_converter_modules():
+    """Hot-reloads converter submodules in dependency order for live development."""
+    import importlib
+    import app.schemas as _m1
+    import app.color_utils as _m2
+    import app.js_geometry_extractor as _m3
+    import app.chrome_capturer as _m4
+    import app.pptx_native_builders as _m5
+    import app.vision_fallback_builder as _m6
+    import app.html_to_pptx_converter as _conv_mod
+
+    for _mod in (_m1, _m2, _m3, _m4, _m5, _m6, _conv_mod):
+        importlib.reload(_mod)
+    return _conv_mod
+
+
 @mcp.tool()
 def convert_html_to_pptx_mcp(
     html_input_path: str,
@@ -200,7 +216,9 @@ def convert_html_to_pptx_mcp(
             else None
         )
 
-    result = convert_html_to_pptx(
+    _conv_mod = _reload_converter_modules()
+
+    result = _conv_mod.convert_html_to_pptx(
         html_input=resolved_input,
         output_pptx_path=resolved_output,
         native_mode=native_mode,
@@ -275,7 +293,9 @@ def capture_html_slides_mcp(
         target_dir = os.path.join(DOWNLOAD_DIR, "captures")
         os.makedirs(target_dir, exist_ok=True)
 
-    result = capture_html_slides(
+    _conv_mod = _reload_converter_modules()
+
+    result = _conv_mod.capture_html_slides(
         html_input=resolved_input,
         output_dir=target_dir,
         target_slide_id=target_slide_id,

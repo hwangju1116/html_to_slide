@@ -32,6 +32,13 @@ def extract_slide_text_summary(slide: Any) -> str:
           tbl_cells.append(f"[{row_str}]")
       if tbl_cells:
         lines.append(f"{shape_desc} Table: " + "; ".join(tbl_cells))
+    elif getattr(shape, "has_chart", False):
+      try:
+        ch = shape.chart
+        series_names = [str(s.name) for s in ch.series]
+        lines.append(f"{shape_desc} Native Chart ({ch.chart_type}): series={series_names}")
+      except Exception:
+        lines.append(f"{shape_desc} Native Chart")
   return "\n".join(lines)
 
 
@@ -140,6 +147,8 @@ Output ONLY a valid JSON object strictly conforming to SlideFidelityReport schem
 
 def run_code_on_test_slide(code_str: str) -> Tuple[bool, Optional[Any], Optional[Presentation], str]:
   """Executes python-pptx code on a sandboxed test presentation to verify runtime safety and structure."""
+  from app.html_to_pptx_converter import build_styled_native_chart, build_styled_native_table
+
   clean_code = code_str
   if "```python" in clean_code:
     clean_code = clean_code.split("```python", 1)[1].split("```", 1)[0].strip()
@@ -161,6 +170,8 @@ def run_code_on_test_slide(code_str: str) -> Tuple[bool, Optional[Any], Optional
       "MSO_SHAPE": MSO_SHAPE,
       "PP_ALIGN": PP_ALIGN,
       "MSO_ANCHOR": MSO_ANCHOR,
+      "build_styled_native_table": build_styled_native_table,
+      "build_styled_native_chart": build_styled_native_chart,
   }
 
   try:
