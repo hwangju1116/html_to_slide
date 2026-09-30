@@ -5,12 +5,12 @@ output "cloud_run_service_url" {
 
 output "mcp_sse_url" {
   description = "MCP SSE endpoint URL to register in ~/.gemini/config/mcp_config.json."
-  value       = "${google_cloud_run_v2_service.mcp_server.uri}/sse"
+  value       = "${google_cloud_run_v2_service.mcp_server.uri}/mcp"
 }
 
 output "team_install_command" {
   description = "One-line command for team members to connect their Antigravity globally to this Cloud Run MCP server."
-  value       = "./install_antigravity.sh --remote-url ${google_cloud_run_v2_service.mcp_server.uri}/sse"
+  value       = "./install_antigravity.sh --remote-url ${google_cloud_run_v2_service.mcp_server.uri}/mcp"
 }
 
 output "mcp_config_json_snippet" {
@@ -18,7 +18,7 @@ output "mcp_config_json_snippet" {
   value = jsonencode({
     mcpServers = {
       "html-to-pptx" = {
-        url = "${google_cloud_run_v2_service.mcp_server.uri}/sse"
+        serverUrl = "${google_cloud_run_v2_service.mcp_server.uri}/mcp"
       }
     }
   })

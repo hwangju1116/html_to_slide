@@ -125,7 +125,7 @@ resource "google_cloud_run_v2_service" "mcp_server" {
       }
       env {
         name  = "MCP_TRANSPORT"
-        value = "sse"
+        value = "streamable-http"
       }
       env {
         name  = "PUBLIC_BASE_URL"
@@ -160,7 +160,7 @@ resource "terraform_data" "register_local_antigravity" {
 
   provisioner "local-exec" {
     working_dir = "${path.module}/.."
-    command     = "bash ./install_antigravity.sh --remote-url ${google_cloud_run_v2_service.mcp_server.uri}/sse"
+    command     = "bash ./install_antigravity.sh --remote-url ${google_cloud_run_v2_service.mcp_server.uri}/mcp"
   }
 
   depends_on = [google_cloud_run_v2_service.mcp_server]

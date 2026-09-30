@@ -43,19 +43,19 @@ What Terraform does automatically:
 1. Enables required APIs (`run.googleapis.com`, `aiplatform.googleapis.com`, `artifactregistry.googleapis.com`, `cloudbuild.googleapis.com`, `iam.googleapis.com`).
 2. Creates a dedicated Service Account (`html-to-pptx-mcp-sa`) with `roles/aiplatform.user`.
 3. Builds the container image remotely via **Cloud Build** (no local Docker required) with Headless Chromium and Pretendard fonts pre-installed.
-4. Deploys the Cloud Run SSE service (`https://html-to-pptx-mcp-<project_num>.<region>.run.app/sse`) and registers it in your local `~/.gemini/config/mcp_config.json`.
+4. Deploys the Cloud Run SSE service (`https://html-to-pptx-mcp-<project_num>.<region>.run.app/mcp`) and registers it in your local `~/.gemini/config/mcp_config.json`.
 
 ### 2. Share with Team Members (Zero Local Setup)
 Once deployed to Cloud Run, other team members do **not** need Python, Chromium, or `gcloud` configured locally. They can attach the Skill and remote MCP server globally with one command:
 ```bash
-./install_antigravity.sh --remote-url https://html-to-pptx-mcp-xxxxx.asia-northeast3.run.app/sse
+./install_antigravity.sh --remote-url https://html-to-pptx-mcp-xxxxx.asia-northeast3.run.app/mcp
 ```
 Or by adding `serverUrl` directly to `~/.gemini/config/mcp_config.json`:
 ```json
 {
   "mcpServers": {
     "html-to-pptx": {
-      "url": "https://html-to-pptx-mcp-xxxxx.asia-northeast3.run.app/sse"
+      "serverUrl": "https://html-to-pptx-mcp-xxxxx.asia-northeast3.run.app/mcp"
     }
   }
 }

@@ -52,6 +52,7 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False
     ),
+    stateless_http=True,
 )
 
 
@@ -404,16 +405,14 @@ def recreate_editable_slide_mcp(
 def main():
     """CLI entrypoint for running the MCP server over stdio (local) or SSE / HTTP (Cloud Run)."""
     parser = argparse.ArgumentParser(description="HTML-to-PPTX MCP Server")
-    default_transport = (
-        "sse"
-        if os.environ.get("K_SERVICE") or os.environ.get("MCP_TRANSPORT") == "sse"
+    default_transport = os.environ.get("MCP_TRANSPORT", "streamable-http" if os.environ.get("K_SERVICE") else "stdio") or os.environ.get("MCP_TRANSPORT") == "sse"
         else os.environ.get("MCP_TRANSPORT", "stdio")
     )
     parser.add_argument(
         "--transport",
         choices=["stdio", "sse", "streamable-http"],
         default=default_transport,
-        help="MCP transport protocol (default: stdio locally, sse on Cloud Run)",
+        help="MCP transport protocol (default: stdio locally, streamable-http on Cloud Run)",
     )
     parser.add_argument(
         "--port",
