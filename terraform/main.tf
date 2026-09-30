@@ -55,14 +55,14 @@ resource "google_project_iam_member" "vertex_ai_user" {
 
 # 4. Build and push container image via Cloud Build (no local Docker daemon required)
 locals {
-  image_uri = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.mcp_repo.repository_id}/${var.service_name}:latest"
-  source_hash = sha256(join("", [
-    filesha256("${path.module}/../Dockerfile"),
-    filesha256("${path.module}/../pyproject.toml"),
-    filesha256("${path.module}/../app/mcp_server.py"),
-    filesha256("${path.module}/../app/html_to_pptx_converter.py"),
-    filesha256("${path.module}/../app/genai_client.py"),
-  ]))
+  source_hash = sha256(join("", concat(
+    [
+      filesha256("${path.module}/../Dockerfile"),
+      filesha256("${path.module}/../pyproject.toml"),
+    ],
+    [for f in sort(fileset("${path.module}/../app", "*.py")) : filesha256("${path.module}/../app/${f}")]
+  )))
+  image_uri              = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.mcp_repo.repository_id}/${var.service_name}:${substr(local.source_hash, 0, 12)}"
   deterministic_base_url = "https://${var.service_name}-${data.google_project.current.number}.${var.region}.run.app"
 }
 

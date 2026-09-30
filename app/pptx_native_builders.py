@@ -1,5 +1,6 @@
 import base64
 import io
+import logging
 import re
 from typing import Any, Dict, List, Optional
 from pptx import Presentation
@@ -13,6 +14,8 @@ from app.color_utils import (
     hex_to_rgb_tuple as _hex_to_rgb_tuple,
     parse_color_value,
 )
+
+logger = logging.getLogger(__name__)
 
 def build_styled_native_table(
     slide,
@@ -450,7 +453,7 @@ def build_styled_native_chart(
 
         return chart_shape
     except Exception as chart_err:
-      print(f"[Native Chart Builder Warning]: {chart_err}")
+      logger.warning("[Native Chart Builder Warning]: %s", chart_err)
 
   # Fallback: embed high-res transparent PNG of the rendered Chart.js canvas
   data_url = chart_data.get("dataUrl")
@@ -460,7 +463,7 @@ def build_styled_native_chart(
       img_bytes = base64.b64decode(b64_part)
       return slide.shapes.add_picture(io.BytesIO(img_bytes), left, top, width=width, height=height)
     except Exception as pic_err:
-      print(f"[Chart Picture Fallback Warning]: {pic_err}")
+      logger.warning("[Chart Picture Fallback Warning]: %s", pic_err)
   return None
 
 
@@ -619,150 +622,46 @@ def build_slide_from_geometry(
   ensure_slide_canvas_background(slide, prs=None, bg_color=bg_color, is_dark=is_dark)
   blend_rgb = (bg_color[0], bg_color[1], bg_color[2])
 
-  # 1.5. Universal Top Header Bar (outside .slide)
-  if geom.get("topHeader") and isinstance(geom["topHeader"], dict):
-    th = geom["topHeader"]
-    th_r = th.get("rect", {})
-    if th_r:
-      div_y = th_r.get("top", 0.0) + th_r.get("height", 0.45)
-      div_line = slide.shapes.add_shape(
-          MSO_SHAPE.RECTANGLE,
-          Inches(max(0.4, th_r.get("left", 0.55))),
-          Inches(div_y),
-          Inches(min(12.5, th_r.get("width", 12.2))),
-          Inches(0.01),
-      )
-      div_line.fill.solid()
-      div_line.fill.fore_color.rgb = parse_color_value(
-          th.get("borderBottomColor"),
-          RGBColor(30, 41, 59) if is_dark else RGBColor(226, 232, 240),
-          bg_blend_rgb=blend_rgb,
-      )
-      div_line.line.fill.background()
-
-    for it in th.get("items", []):
-      ir = it.get("rect", {})
-      ist = it.get("styles", {})
-      it_txt = it.get("text", "")
-      if not it_txt or not ir:
-        continue
-      raw_it_bg = ist.get("backgroundColor", "")
-      has_it_bg = bool(raw_it_bg and raw_it_bg not in ("transparent", "rgba(0, 0, 0, 0)"))
-      if has_it_bg:
-        it_shape = slide.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(ir["left"]),
-            Inches(ir["top"]),
-            Inches(max(0.22, ir["width"])),
-            Inches(max(0.20, ir["height"])),
-        )
-        it_shape.fill.solid()
-        it_shape.fill.fore_color.rgb = parse_color_value(raw_it_bg, brand_color_rgb, bg_blend_rgb=blend_rgb)
-        it_shape.line.fill.background()
-        tf = it_shape.text_frame
-        tf.word_wrap = False
-        tf.margin_left = Inches(0.02)
-        tf.margin_right = Inches(0.02)
-        tf.margin_top = Inches(0.01)
-        tf.margin_bottom = Inches(0.01)
-        p = tf.paragraphs[0]
-        p.text = it_txt
-        p.font.name = font_name
-        p.font.size = Pt(ist.get("fontSizePt", 9.0))
-        p.font.bold = True
-        p.font.color.rgb = parse_color_value(ist.get("color"), RGBColor(255, 255, 255))
-        p.alignment = PP_ALIGN.CENTER
-      else:
-        is_right = ir.get("left", 0.0) > 8.0
-        w_buf = max(0.5, ir.get("width", 1.0) + 0.25)
-        l_pos = max(0.4, ir.get("left", 0.5) - (0.20 if is_right else 0.0))
-        it_box = slide.shapes.add_textbox(
-            Inches(l_pos),
-            Inches(ir.get("top", 0.15)),
-            Inches(w_buf),
-            Inches(max(0.20, ir.get("height", 0.20))),
-        )
-        tf = it_box.text_frame
-        tf.word_wrap = False
-        tf.margin_left = Inches(0.0)
-        tf.margin_right = Inches(0.0)
-        tf.margin_top = Inches(0.0)
-        tf.margin_bottom = Inches(0.0)
-        p = tf.paragraphs[0]
-        p.text = it_txt
-        p.font.name = font_name
-        p.font.size = Pt(ist.get("fontSizePt", 9.5))
-        p.font.bold = bool(ist.get("isBold"))
-        p.font.color.rgb = parse_color_value(ist.get("color"), RGBColor(148, 163, 184) if is_dark else RGBColor(100, 116, 139))
-        if is_right:
-          p.alignment = PP_ALIGN.RIGHT
-
   # 2. Header Badges (both eyebrow and badge-pill)
   for b_data in geom.get("headerBadges", []):
     r = b_data["rect"]
     b_txt = b_data["text"]
-    st = b_data.get("styles", {})
-    raw_bg = st.get("backgroundColor", "")
-    has_bg = b_data.get("hasBg", bool(raw_bg and raw_bg not in ("transparent", "rgba(0, 0, 0, 0)")))
-    has_border = b_data.get("hasBorder", float(st.get("borderWidth", 0) or 0) > 0)
-    is_pill = r["left"] > 7.0 or "pill" in str(st) or "Slide #" in b_txt
-
-    if has_bg or has_border:
-      bg_rgb = parse_color_value(raw_bg, brand_color_rgb if not is_pill else RGBColor(241, 245, 249), bg_blend_rgb=blend_rgb)
-      fg_rgb = parse_color_value(st.get("color"), RGBColor(255, 255, 255) if not is_pill else brand_color_rgb)
-      b_shape = slide.shapes.add_shape(
-          MSO_SHAPE.ROUNDED_RECTANGLE,
-          Inches(r["left"]),
-          Inches(r["top"]),
-          Inches(max(0.8, r["width"] + 0.16)),
-          Inches(max(0.24, r["height"])),
-      )
-      try:
-        b_shape.adjustments[0] = 0.5
-      except Exception:
-        pass
+    raw_bg = (b_data.get("styles", {}).get("backgroundColor") or "").strip()
+    has_bg = bool(raw_bg and raw_bg not in ("transparent", "rgba(0, 0, 0, 0)", "none"))
+    is_pill = r["left"] > 7.0 or "pill" in str(b_data.get("styles", {})) or "Slide #" in b_txt or has_bg
+    bg_rgb = parse_color_value(raw_bg if has_bg else None, None, bg_blend_rgb=blend_rgb)
+    fg_rgb = parse_color_value(b_data["styles"]["color"], RGBColor(255, 255, 255) if has_bg else brand_color_rgb)
+    b_shape = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(r["left"]),
+        Inches(r["top"]),
+        Inches(max(0.8, r["width"])),
+        Inches(max(0.22, r["height"])),
+    )
+    if bg_rgb is not None:
       b_shape.fill.solid()
       b_shape.fill.fore_color.rgb = bg_rgb
-      b_border = parse_color_value(st.get("borderColor"), None, bg_blend_rgb=blend_rgb) if has_border else None
-      if b_border:
-        b_shape.line.color.rgb = b_border
-        b_shape.line.width = Pt(1.0)
-      else:
-        b_shape.line.fill.background()
-      tf = b_shape.text_frame
-      tf.word_wrap = False
-      tf.margin_left = Inches(0.08)
-      tf.margin_right = Inches(0.08)
-      tf.margin_top = Inches(0.02)
-      tf.margin_bottom = Inches(0.02)
-      p = tf.paragraphs[0]
-      p.text = b_txt
-      p.font.name = font_name
-      p.font.size = Pt(st.get("fontSizePt", 10.0))
-      p.font.bold = True
-      p.font.color.rgb = fg_rgb
-      p.alignment = PP_ALIGN.CENTER
     else:
-      fg_rgb = parse_color_value(st.get("color"), RGBColor(244, 63, 94) if is_dark else brand_color_rgb)
-      b_box = slide.shapes.add_textbox(
-          Inches(r["left"]),
-          Inches(r["top"]),
-          Inches(max(1.5, r["width"] + 0.35)),
-          Inches(max(0.24, r["height"])),
-      )
-      tf = b_box.text_frame
-      tf.word_wrap = False
-      tf.margin_left = Inches(0.0)
-      tf.margin_right = Inches(0.0)
-      tf.margin_top = Inches(0.0)
-      tf.margin_bottom = Inches(0.0)
-      p = tf.paragraphs[0]
-      p.text = b_txt
-      p.font.name = font_name
-      p.font.size = Pt(st.get("fontSizePt", 10.0))
-      p.font.bold = True
-      p.font.color.rgb = fg_rgb
-      p.alignment = PP_ALIGN.RIGHT if r["left"] > 7.5 else PP_ALIGN.LEFT
+      b_shape.fill.background()
+    b_border = parse_color_value(b_data["styles"].get("borderColor"), None, bg_blend_rgb=blend_rgb)
+    if b_border:
+      b_shape.line.color.rgb = b_border
+      b_shape.line.width = Pt(1.0)
+    else:
+      b_shape.line.fill.background()
+    tf = b_shape.text_frame
+    tf.word_wrap = False
+    tf.margin_left = Inches(0.08 if has_bg else 0.0)
+    tf.margin_right = Inches(0.08 if has_bg else 0.0)
+    tf.margin_top = Inches(0.02)
+    tf.margin_bottom = Inches(0.02)
+    p = tf.paragraphs[0]
+    p.text = b_txt
+    p.font.name = font_name
+    p.font.size = Pt(b_data["styles"].get("fontSizePt", 10.0))
+    p.font.bold = True
+    p.font.color.rgb = fg_rgb
+    p.alignment = PP_ALIGN.CENTER if has_bg else PP_ALIGN.LEFT
 
   # 3. Slide Number
   if geom.get("num") and geom["num"]["text"]:
@@ -787,34 +686,19 @@ def build_slide_from_geometry(
     r = t_data["rect"]
     st = t_data["styles"]
     is_center = st.get("textAlign") == "center"
-    t_left = Inches(r["left"]) if is_center else Inches(max(0.5, r["left"]))
+    t_left = Inches(r["left"]) if is_center else Inches(max(0.6, r["left"]))
     t_top = Inches(r["top"])
-    t_w = Inches(r["width"] + 0.2) if is_center else Inches(min(12.8 - r["left"], max(r["width"] + 0.25, 4.0)))
-    t_h = Inches(max(0.45, r["height"] + 0.08))
+    t_w = Inches(r["width"]) if is_center else Inches(min(12.0, r["width"]))
+    t_h = Inches(max(0.45, r["height"]))
     t_box = slide.shapes.add_textbox(t_left, t_top, t_w, t_h)
     tf = t_box.text_frame
     tf.word_wrap = True
-    tf.margin_left = Inches(0.0)
-    tf.margin_right = Inches(0.0)
-    tf.margin_top = Inches(0.0)
-    tf.margin_bottom = Inches(0.0)
     p = tf.paragraphs[0]
-    default_title_col = parse_color_value(st.get("color"), RGBColor(248, 250, 252) if is_dark else brand_color_rgb)
-    if t_data.get("runs") and len(t_data["runs"]) > 1:
-      p.text = ""
-      for r_item in t_data["runs"]:
-        run = p.add_run()
-        run.text = r_item.get("text", "")
-        run.font.name = font_name
-        run.font.size = Pt(st.get("fontSizePt", 24.0))
-        run.font.bold = bool(r_item.get("bold", True))
-        run.font.color.rgb = parse_color_value(r_item.get("color"), default_title_col)
-    else:
-      p.text = t_data["text"]
-      p.font.name = font_name
-      p.font.size = Pt(st.get("fontSizePt", 24.0))
-      p.font.bold = True
-      p.font.color.rgb = default_title_col
+    p.text = t_data["text"]
+    p.font.name = font_name
+    p.font.size = Pt(st.get("fontSizePt", 24.0))
+    p.font.bold = True
+    p.font.color.rgb = parse_color_value(st.get("color"), RGBColor(248, 250, 252) if is_dark else brand_color_rgb)
     if is_center:
       p.alignment = PP_ALIGN.CENTER
 
@@ -823,59 +707,31 @@ def build_slide_from_geometry(
     s_data = geom["sub"]
     r = s_data["rect"]
     st = s_data["styles"]
-    s_left = Inches(max(0.5, r["left"]))
+    s_left = Inches(max(0.6, r["left"]))
     s_top = Inches(r["top"])
-    s_w = Inches(min(12.8 - r["left"], max(r["width"] + 0.25, 4.0)))
-    s_h = Inches(max(0.30, r["height"] + 0.06))
+    s_w = Inches(min(12.0, r["width"]))
+    s_h = Inches(max(0.30, r["height"]))
     s_box = slide.shapes.add_textbox(s_left, s_top, s_w, s_h)
     tf = s_box.text_frame
     tf.word_wrap = True
-    tf.margin_left = Inches(0.0)
-    tf.margin_right = Inches(0.0)
-    tf.margin_top = Inches(0.0)
-    tf.margin_bottom = Inches(0.0)
     p = tf.paragraphs[0]
     p.text = s_data["text"]
     p.font.name = font_name
     p.font.size = Pt(st.get("fontSizePt", 13.0))
     p.font.color.rgb = parse_color_value(st.get("color"), RGBColor(148, 163, 184) if is_dark else RGBColor(100, 116, 139))
 
-  # 6. Description / Intro Paragraphs & Standalone Section Headings
+  # 6. Description / Intro Paragraphs (Cover & Non-card slides)
   for d in geom.get("desc", []):
     r = d["rect"]
     st = d["styles"]
-    d_box = slide.shapes.add_textbox(Inches(r["left"]), Inches(r["top"]), Inches(r["width"] + 0.2), Inches(r["height"] + 0.05))
+    d_box = slide.shapes.add_textbox(Inches(r["left"]), Inches(r["top"]), Inches(r["width"]), Inches(r["height"]))
     tf = d_box.text_frame
     tf.word_wrap = True
-    tf.margin_left = Inches(0.0)
-    tf.margin_right = Inches(0.0)
     p = tf.paragraphs[0]
     p.text = d["text"]
     p.font.name = font_name
     p.font.size = Pt(st.get("fontSizePt", 12.0))
     p.font.color.rgb = parse_color_value(st.get("color"), RGBColor(203, 213, 225) if is_dark else RGBColor(74, 77, 82))
-
-  for st_item in geom.get("standaloneTexts", []):
-    r = st_item["rect"]
-    st = st_item.get("styles", {})
-    st_box = slide.shapes.add_textbox(
-        Inches(r["left"]),
-        Inches(r["top"]),
-        Inches(max(1.5, r["width"] + 0.3)),
-        Inches(max(0.22, r["height"] + 0.04)),
-    )
-    tf = st_box.text_frame
-    tf.word_wrap = True
-    tf.margin_left = Inches(0.0)
-    tf.margin_right = Inches(0.0)
-    tf.margin_top = Inches(0.0)
-    tf.margin_bottom = Inches(0.0)
-    p = tf.paragraphs[0]
-    p.text = st_item["text"]
-    p.font.name = font_name
-    p.font.size = Pt(st.get("fontSizePt", 10.5))
-    p.font.bold = bool(st.get("isBold"))
-    p.font.color.rgb = parse_color_value(st.get("color"), RGBColor(148, 163, 184) if is_dark else RGBColor(100, 116, 139))
 
   # 7. Native Cards & Layout Containers
   for card in geom.get("cards", []):
@@ -914,29 +770,13 @@ def build_slide_from_geometry(
       continue
 
     # Normal Container / Card
-    c_shape = slide.shapes.add_shape(
-        MSO_SHAPE.ROUNDED_RECTANGLE if card.get("isRounded", True) else MSO_SHAPE.RECTANGLE,
-        c_left,
-        c_top,
-        c_w,
-        c_h,
-    )
-    try:
-      if card.get("isRounded", True):
-        c_shape.adjustments[0] = 0.04
-    except Exception:
-      pass
+    c_shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, c_left, c_top, c_w, c_h)
     c_shape.fill.solid()
     c_bg = parse_color_value(card["styles"]["backgroundColor"], RGBColor(30, 41, 59) if is_dark else RGBColor(255, 255, 255), bg_blend_rgb=blend_rgb)
-    c_border = parse_color_value(
-        card["styles"].get("borderColor"),
-        RGBColor(40, 50, 68) if is_dark else RGBColor(226, 232, 240),
-        bg_blend_rgb=blend_rgb,
-    )
+    c_border = parse_color_value(card["styles"].get("borderColor"), RGBColor(51, 65, 85) if is_dark else RGBColor(226, 232, 240), bg_blend_rgb=blend_rgb)
     c_shape.fill.fore_color.rgb = c_bg
     c_shape.line.color.rgb = c_border
     c_shape.line.width = Pt(1.0)
-    card_blend_rgb = (c_bg[0], c_bg[1], c_bg[2])
 
     # Handle Attach Card
     if card.get("isAttachCard") and card.get("attachData"):
@@ -968,10 +808,10 @@ def build_slide_from_geometry(
         p2.font.color.rgb = RGBColor(74, 85, 104)
       continue
 
-    # Top Accent Capsule Pill or Left Vertical Accent Bar
+    # Top or Left Accent Capsule Pill
     curr_top = c_top
     if card.get("hasTopAccent"):
-      bar_color = parse_color_value(card.get("topAccentColor"), brand_color_rgb, bg_blend_rgb=card_blend_rgb)
+      bar_color = parse_color_value(card.get("topAccentColor"), brand_color_rgb)
       accent_bar = slide.shapes.add_shape(
           MSO_SHAPE.ROUNDED_RECTANGLE,
           c_left + Inches(0.20),
@@ -991,191 +831,29 @@ def build_slide_from_geometry(
       curr_top = c_top + Inches(0.12)
 
     if card.get("hasLeftAccent"):
-      l_bar_color = parse_color_value(card.get("leftAccentColor"), brand_color_rgb, bg_blend_rgb=card_blend_rgb)
-      left_bar = slide.shapes.add_shape(
+      l_bar_color = parse_color_value(card.get("leftAccentColor"), brand_color_rgb)
+      l_bar = slide.shapes.add_shape(
           MSO_SHAPE.ROUNDED_RECTANGLE,
-          c_left,
-          c_top + Inches(0.04),
+          c_left + Inches(0.06),
+          c_top + Inches(0.12),
           Inches(0.06),
-          max(Inches(0.12), c_h - Inches(0.08)),
+          max(Inches(0.24), c_h - Inches(0.24)),
       )
-      left_bar.fill.solid()
-      left_bar.fill.fore_color.rgb = l_bar_color
-      left_bar.line.fill.background()
+      l_bar.fill.solid()
+      l_bar.fill.fore_color.rgb = l_bar_color
+      l_bar.line.fill.background()
 
-    # Check if this card uses exact coordinate DOM blocks (modern Tailwind / glass-card layouts)
-    has_legacy_specials = bool(
-        card.get("pipelineSteps")
-        or card.get("subCards")
-        or card.get("fItems")
-        or card.get("flows")
-        or card.get("codeBlocks")
-    )
-    if not has_legacy_specials and (card.get("textBlocks") or card.get("innerBoxes")):
-      # 7a. Render nested innerBoxes (icon boxes, number boxes, dark sub-panels, inline pills)
-      for ib in card.get("innerBoxes", []):
-        ibr = ib["rect"]
-        ib_st = ib.get("styles", {})
-        ib_shape = slide.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE if ib_st.get("isRounded", True) else MSO_SHAPE.RECTANGLE,
-            Inches(ibr["left"]),
-            Inches(ibr["top"]),
-            Inches(max(0.20, ibr["width"])),
-            Inches(max(0.18, ibr["height"])),
-        )
-        try:
-          if ib_st.get("isRounded", True):
-            ib_shape.adjustments[0] = 0.25 if (ibr["width"] < 0.8 and ibr["height"] < 0.8) else 0.06
-        except Exception:
-          pass
-        if ib.get("hasBg"):
-          ib_bg = parse_color_value(ib_st.get("backgroundColor"), c_bg, bg_blend_rgb=card_blend_rgb)
-          ib_shape.fill.solid()
-          ib_shape.fill.fore_color.rgb = ib_bg
-        else:
-          ib_shape.fill.background()
-
-        if ib.get("hasBorder"):
-          ib_border = parse_color_value(ib_st.get("borderColor"), c_border, bg_blend_rgb=card_blend_rgb)
-          ib_shape.line.color.rgb = ib_border
-          ib_shape.line.width = Pt(1.0)
-        else:
-          ib_shape.line.fill.background()
-
-        if ib.get("hasLeftAccent"):
-          ib_lcol = parse_color_value(ib.get("leftAccentColor"), brand_color_rgb, bg_blend_rgb=card_blend_rgb)
-          ib_lbar = slide.shapes.add_shape(
-              MSO_SHAPE.ROUNDED_RECTANGLE,
-              Inches(ibr["left"]),
-              Inches(ibr["top"] + 0.02),
-              Inches(0.05),
-              Inches(max(0.10, ibr["height"] - 0.04)),
-          )
-          ib_lbar.fill.solid()
-          ib_lbar.fill.fore_color.rgb = ib_lcol
-          ib_lbar.line.fill.background()
-
-        if ib.get("text"):
-          tf = ib_shape.text_frame
-          tf.word_wrap = False
-          tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-          tf.margin_left = Inches(0.03)
-          tf.margin_right = Inches(0.03)
-          tf.margin_top = Inches(0.01)
-          tf.margin_bottom = Inches(0.01)
-          p = tf.paragraphs[0]
-          p.text = ib["text"]
-          p.font.name = font_name
-          p.font.size = Pt(ib_st.get("fontSizePt", 9.5))
-          p.font.bold = bool(ib_st.get("isBold", True))
-          p.font.color.rgb = parse_color_value(ib_st.get("color"), RGBColor(255, 255, 255) if is_dark else brand_color_rgb)
-          p.alignment = PP_ALIGN.CENTER
-
-      # 7b. Render card internal dividers
-      for dv in card.get("dividers", []):
-        dvr = dv["rect"]
-        dv_shape = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            Inches(dvr["left"]),
-            Inches(dvr["top"]),
-            Inches(max(0.01, dvr["width"])),
-            Inches(max(0.01, dvr["height"])),
-        )
-        dv_shape.fill.solid()
-        dv_shape.fill.fore_color.rgb = parse_color_value(
-            dv.get("color"),
-            RGBColor(51, 65, 85) if is_dark else RGBColor(226, 232, 240),
-            bg_blend_rgb=card_blend_rgb,
-        )
-        dv_shape.line.fill.background()
-
-      # 7c. Render exact-coordinate textBlocks inside card
-      all_tbs = card.get("textBlocks", [])
-      all_ibs = card.get("innerBoxes", [])
-      for tb in all_tbs:
-        tbr = tb["rect"]
-        tbst = tb.get("styles", {})
-        align_str = str(tbst.get("textAlign", "left")).lower()
-
-        # Find nearest sibling element on the same horizontal row to the right
-        right_limit = r["left"] + r["width"] - 0.10
-        for other in all_tbs:
-          if other is tb:
-            continue
-          or_rect = other["rect"]
-          if or_rect["left"] > tbr["left"] + 0.08 and abs(or_rect["top"] - tbr["top"]) < 0.22:
-            right_limit = min(right_limit, or_rect["left"] - 0.03)
-        for ib_other in all_ibs:
-          if not ib_other.get("text"):
-            continue
-          ibr_o = ib_other["rect"]
-          if ibr_o["left"] > tbr["left"] + 0.08 and abs(ibr_o["top"] - tbr["top"]) < 0.22:
-            right_limit = min(right_limit, ibr_o["left"] - 0.03)
-
-        if align_str == "right":
-          w_val = max(tbr["width"] + 0.18, 0.45)
-          l_val = max(r["left"] + 0.06, (tbr["left"] + tbr["width"]) - w_val)
-        elif align_str == "center":
-          w_val = max(tbr["width"] + 0.16, 0.45)
-          l_val = max(r["left"] + 0.04, tbr["left"] - 0.08)
-        else:
-          l_val = tbr["left"]
-          w_val = max(tbr["width"], min(tbr["width"] + 0.22, right_limit - l_val))
-
-        tx_box = slide.shapes.add_textbox(
-            Inches(l_val),
-            Inches(tbr["top"]),
-            Inches(max(0.30, w_val)),
-            Inches(max(0.20, tbr["height"] + 0.04)),
-        )
-        tf = tx_box.text_frame
-        tf.word_wrap = True
-        tf.margin_left = Inches(0.02)
-        tf.margin_right = Inches(0.02)
-        tf.margin_top = Inches(0.01)
-        tf.margin_bottom = Inches(0.01)
-        p = tf.paragraphs[0]
-        if align_str == "center":
-          p.alignment = PP_ALIGN.CENTER
-        elif align_str == "right":
-          p.alignment = PP_ALIGN.RIGHT
-
-        default_tb_col = parse_color_value(
-            tbst.get("color"),
-            RGBColor(241, 245, 249) if is_dark else RGBColor(17, 17, 21),
-        )
-        if tb.get("runs") and len(tb["runs"]) > 1:
-          p.text = ""
-          for r_idx, r_item in enumerate(tb["runs"]):
-            run = p.add_run()
-            r_txt = r_item.get("text", "")
-            if r_idx == 0 and tb.get("isListItem") and not r_txt.startswith(("•", "-", "✔", "✓", "⚠", "❌")):
-              r_txt = f"• {r_txt}"
-            run.text = r_txt
-            run.font.name = font_name
-            run.font.size = Pt(float(r_item.get("fontSizePt") or tbst.get("fontSizePt", 10.5)))
-            run.font.bold = bool(r_item.get("bold", tbst.get("isBold")))
-            run.font.color.rgb = parse_color_value(r_item.get("color"), default_tb_col)
-        else:
-          txt = tb.get("text", "")
-          if tb.get("isListItem") and not txt.startswith(("•", "-", "✔", "✓", "⚠", "❌")):
-            txt = f"• {txt}"
-          p.text = txt
-          p.font.name = font_name
-          p.font.size = Pt(float(tbst.get("fontSizePt", 10.5)))
-          p.font.bold = bool(tbst.get("isBold"))
-          p.font.color.rgb = default_tb_col
-      continue
-
-    # Legacy Fallback Card Content Rendering (Pipeline Steps, Flows, fItems, SubCards, Paragraphs)
+    # Pipeline Steps container: do NOT draw outer card title
     has_pipeline = len(card.get("pipelineSteps", [])) > 0
 
-    # Card Tag
+    # Card Tag / Eyebrow
     if card.get("tag") and card["tag"]["text"]:
       tg = card["tag"]
       tg_r = tg["rect"]
-      tg_bg = parse_color_value(tg["styles"]["backgroundColor"], brand_color_rgb, bg_blend_rgb=blend_rgb)
-      tg_fg = parse_color_value(tg["styles"]["color"], RGBColor(255, 255, 255))
+      tg_raw_bg = (tg.get("styles", {}).get("backgroundColor") or "").strip()
+      tg_has_bg = bool(tg_raw_bg and tg_raw_bg not in ("transparent", "rgba(0, 0, 0, 0)", "none"))
+      tg_bg = parse_color_value(tg_raw_bg if tg_has_bg else None, None, bg_blend_rgb=blend_rgb)
+      tg_fg = parse_color_value(tg["styles"]["color"], RGBColor(255, 255, 255) if tg_has_bg else brand_color_rgb)
       tg_shape = slide.shapes.add_shape(
           MSO_SHAPE.ROUNDED_RECTANGLE,
           c_left + Inches(0.18),
@@ -1183,20 +861,23 @@ def build_slide_from_geometry(
           Inches(max(0.8, tg_r["width"])),
           Inches(max(0.22, tg_r["height"])),
       )
-      tg_shape.fill.solid()
-      tg_shape.fill.fore_color.rgb = tg_bg
+      if tg_bg is not None:
+        tg_shape.fill.solid()
+        tg_shape.fill.fore_color.rgb = tg_bg
+      else:
+        tg_shape.fill.background()
       tg_shape.line.fill.background()
       tf = tg_shape.text_frame
       tf.word_wrap = False
-      tf.margin_left = Inches(0.06)
-      tf.margin_right = Inches(0.06)
+      tf.margin_left = Inches(0.06 if tg_has_bg else 0.0)
+      tf.margin_right = Inches(0.06 if tg_has_bg else 0.0)
       p = tf.paragraphs[0]
       p.text = tg["text"]
       p.font.name = font_name
       p.font.size = Pt(tg["styles"].get("fontSizePt", 9.5))
       p.font.bold = True
       p.font.color.rgb = tg_fg
-      curr_top += Inches(max(0.24, tg_r["height"])) + Inches(0.06)
+      curr_top += Inches(max(0.22, tg_r["height"])) + Inches(0.04)
 
     # Badges
     for b in card.get("badges", []):
@@ -1409,9 +1090,9 @@ def build_slide_from_geometry(
       scr = sc["rect"]
       sc_shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(scr["left"]), Inches(scr["top"]), Inches(scr["width"]), Inches(scr["height"]))
       sc_shape.fill.solid()
-      sc_bg = parse_color_value(sc["styles"]["backgroundColor"], RGBColor(248, 250, 252), bg_blend_rgb=blend_rgb)
+      sc_bg = parse_color_value(sc["styles"]["backgroundColor"], RGBColor(15, 23, 42) if is_dark else RGBColor(248, 250, 252), bg_blend_rgb=blend_rgb)
       sc_shape.fill.fore_color.rgb = sc_bg
-      sc_border = parse_color_value(sc["styles"].get("borderColor"), RGBColor(226, 232, 240))
+      sc_border = parse_color_value(sc["styles"].get("borderColor"), RGBColor(51, 65, 85) if is_dark else RGBColor(226, 232, 240), bg_blend_rgb=blend_rgb)
       sc_shape.line.color.rgb = sc_border
       sc_shape.line.width = Pt(1.0)
       tf = sc_shape.text_frame
@@ -1427,14 +1108,17 @@ def build_slide_from_geometry(
         p0.font.name = font_name
         p0.font.size = Pt(11.0)
         p0.font.bold = True
-        p0.font.color.rgb = parse_color_value(sc["styles"].get("color"), brand_color_rgb)
+        head_col_str = (sc.get("headStyles") or {}).get("color") or sc["styles"].get("color")
+        p0.font.color.rgb = parse_color_value(head_col_str, RGBColor(248, 250, 252) if is_dark else brand_color_rgb)
         p_idx += 1
-      for it in sc.get("items", []):
+      sc_items = sc.get("items", [])
+      for it in sc_items:
         p_it = tf.paragraphs[0] if p_idx == 0 else tf.add_paragraph()
-        p_it.text = it if it.startswith(("•", "-", "1", "2")) else f"• {it}"
+        use_bullet = len(sc_items) > 1 and not it.startswith(("•", "-", "1", "2", "3", "KPI"))
+        p_it.text = f"• {it}" if use_bullet else it
         p_it.font.name = font_name
         p_it.font.size = Pt(9.5)
-        p_it.font.color.rgb = RGBColor(30, 41, 59)
+        p_it.font.color.rgb = parse_color_value(sc["styles"].get("color"), RGBColor(203, 213, 225) if is_dark else RGBColor(30, 41, 59))
         p_idx += 1
 
     # Code Blocks & Spec/Example Blocks
@@ -1449,9 +1133,9 @@ def build_slide_from_geometry(
           cb_h,
       )
       cb_box.fill.solid()
-      cb_bg = parse_color_value(cb["styles"]["backgroundColor"], RGBColor(241, 245, 249), bg_blend_rgb=blend_rgb)
+      cb_bg = parse_color_value(cb["styles"]["backgroundColor"], RGBColor(15, 23, 42) if is_dark else RGBColor(241, 245, 249), bg_blend_rgb=blend_rgb)
       cb_box.fill.fore_color.rgb = cb_bg
-      cb_border = parse_color_value(cb["styles"].get("borderColor"), RGBColor(226, 232, 240))
+      cb_border = parse_color_value(cb["styles"].get("borderColor"), RGBColor(51, 65, 85) if is_dark else RGBColor(226, 232, 240))
       cb_box.line.color.rgb = cb_border
       cb_box.line.width = Pt(1.0)
       tf = cb_box.text_frame
@@ -1465,30 +1149,54 @@ def build_slide_from_geometry(
         p.text = line
         p.font.name = "Consolas"
         p.font.size = Pt(cb["styles"].get("fontSizePt", 9.0))
-        p.font.color.rgb = parse_color_value(cb["styles"].get("color"), RGBColor(30, 41, 59))
+        p.font.color.rgb = parse_color_value(cb["styles"].get("color"), RGBColor(203, 213, 225) if is_dark else RGBColor(30, 41, 59))
 
     # Remaining Paragraphs & List Items
     paras = card.get("paragraphs", [])
-    if paras and not card.get("subCards") and not card.get("pipelineSteps"):
-      p_box = slide.shapes.add_textbox(
-          c_left + Inches(0.18),
-          curr_top,
-          c_w - Inches(0.36),
-          max(Inches(0.5), c_h - (curr_top - c_top) - Inches(0.10)),
-      )
-      tf = p_box.text_frame
-      tf.word_wrap = True
-      tf.margin_top = Inches(0.02)
-      tf.margin_bottom = Inches(0.02)
-      for p_idx, para in enumerate(paras):
-        p = tf.paragraphs[0] if p_idx == 0 else tf.add_paragraph()
-        p.text = para["text"] if para["text"].startswith(("•", "-", "1", "2")) else f"• {para['text']}"
-        p.font.name = font_name
-        is_sub = len(para["text"]) > 15 and not para["text"].startswith(("1", "2", "3", "•", "✔", "❌", "💬", "📦", "🔑", "🔄"))
-        p.font.size = Pt(10.5 if is_sub else 11.5)
-        p.font.bold = not is_sub
-        p_col = parse_color_value(para["styles"]["color"], RGBColor(226, 232, 240) if is_dark else RGBColor(17, 17, 21))
-        p.font.color.rgb = p_col
+    if paras and not card.get("pipelineSteps"):
+      if card.get("subCards") or card.get("hasCanvas"):
+        for para in paras:
+          pr = para.get("rect", {})
+          if not pr:
+            continue
+          p_box = slide.shapes.add_textbox(
+              Inches(pr.get("left", r["left"] + 0.18)),
+              Inches(pr.get("top", r["top"] + 0.40)),
+              Inches(max(0.6, pr.get("width", r["width"] - 0.36))),
+              Inches(max(0.24, pr.get("height", 0.30))),
+          )
+          tf = p_box.text_frame
+          tf.word_wrap = True
+          tf.margin_top = Inches(0.02)
+          tf.margin_bottom = Inches(0.02)
+          p = tf.paragraphs[0]
+          raw_ptxt = para["text"]
+          p.text = f"• {raw_ptxt}" if (para.get("isList") and not raw_ptxt.startswith(("•", "-", "1", "2"))) else raw_ptxt
+          p.font.name = font_name
+          p.font.size = Pt(para.get("styles", {}).get("fontSizePt", 10.0))
+          p.font.bold = bool(para.get("styles", {}).get("isBold"))
+          p.font.color.rgb = parse_color_value(para.get("styles", {}).get("color"), RGBColor(203, 213, 225) if is_dark else RGBColor(71, 85, 105))
+      else:
+        p_box = slide.shapes.add_textbox(
+            c_left + Inches(0.18),
+            curr_top,
+            c_w - Inches(0.36),
+            max(Inches(0.4), c_h - (curr_top - c_top) - Inches(0.10)),
+        )
+        tf = p_box.text_frame
+        tf.word_wrap = True
+        tf.margin_top = Inches(0.02)
+        tf.margin_bottom = Inches(0.02)
+        for p_idx, para in enumerate(paras):
+          p = tf.paragraphs[0] if p_idx == 0 else tf.add_paragraph()
+          raw_ptxt = para["text"]
+          use_bullet = bool(para.get("isList")) and not raw_ptxt.startswith(("•", "-", "1", "2"))
+          p.text = f"• {raw_ptxt}" if use_bullet else raw_ptxt
+          p.font.name = font_name
+          p.font.size = Pt(para.get("styles", {}).get("fontSizePt", 10.5))
+          p.font.bold = bool(para.get("styles", {}).get("isBold"))
+          p_col = parse_color_value(para["styles"]["color"], RGBColor(226, 232, 240) if is_dark else RGBColor(17, 17, 21))
+          p.font.color.rgb = p_col
 
   # 8. Native Tables
   for tbl in geom.get("tables", []):

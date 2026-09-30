@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any, Dict, Optional
 from google import genai
 from google.genai import types
@@ -26,6 +27,9 @@ from app.pptx_native_builders import (
     refine_card_accent_bars,
 )
 from app.schemas import SlideNativeDecomposition, SlideNativeElement, TextRun
+
+logger = logging.getLogger(__name__)
+
 
 def decompose_slide_image_with_vision(
     image_path: str,
@@ -73,7 +77,7 @@ def decompose_slide_image_with_vision(
     if response.text:
       return SlideNativeDecomposition.model_validate_json(response.text)
   except Exception as e:
-    print(f"[Vision Decomposition Error] {type(e).__name__}: {e}")
+    logger.warning("[Vision Decomposition Error] %s: %s", type(e).__name__, e)
     return None
 
 
@@ -343,7 +347,13 @@ def build_slide(prs, slide):
           if code:
             break
         except Exception as api_err:
-          print(f"[Vision CodeGen API Try {api_try + 1}] Transient error: {api_err}")
+          err_str = str(api_err)
+          logger.warning("[Vision CodeGen API Try %d] Transient error: %s", api_try + 1, api_err)
+          if (
+              "reauthentication is needed" in err_str.lower()
+              or "defaultcredentialserror" in type(api_err).__name__.lower()
+          ):
+            return None
           if api_try < 2:
             import time
             time.sleep(3 * (api_try + 1))
@@ -354,7 +364,7 @@ def build_slide(prs, slide):
       # 1. Structural runtime safety check
       success, test_slide, test_prs, exec_err = run_code_on_test_slide(code)
       if not success:
-        print(f"[Slide CodeGen Attempt {attempt}] Execution error: {exec_err}")
+        logger.warning("[Slide CodeGen Attempt %d] Execution error: %s", attempt, exec_err)
         current_prompt = (
             base_prompt
             + f"\n\n[CRITICAL ERROR IN PREVIOUS ATTEMPT]:\nExecution failed with error: {exec_err}\nFix syntax, imports, and variables, and regenerate complete code."
@@ -370,12 +380,15 @@ def build_slide(prs, slide):
       )
 
       if report.passed and report.score >= 7:
-        print(f"[Slide Fidelity Audit PASSED on Attempt {attempt}] Score: {report.score}/10")
+        logger.info("[Slide Fidelity Audit PASSED on Attempt %d] Score: %d/10", attempt, report.score)
         return code
       else:
-        print(
-            f"[Slide Fidelity Audit REJECTED on Attempt {attempt}] Score: {report.score}/10."
-            f" Issues: {report.design_and_layout_issues}, Missing: {report.missing_or_truncated_text}"
+        logger.warning(
+            "[Slide Fidelity Audit REJECTED on Attempt %d] Score: %d/10. Issues: %s, Missing: %s",
+            attempt,
+            report.score,
+            report.design_and_layout_issues,
+            report.missing_or_truncated_text,
         )
         current_prompt = (
             base_prompt
@@ -389,7 +402,7 @@ def build_slide(prs, slide):
 
     return best_code
   except Exception as e:
-    print(f"[Vision CodeGen Error] {type(e).__name__}: {e}")
+    logger.warning("[Vision CodeGen Error] %s: %s", type(e).__name__, e)
     return None
 
 
@@ -484,7 +497,7 @@ def build_native_slide_from_code(
       if tbl_dom:
         has_table_shape = any(s.has_table for s in slide.shapes)
         if not has_table_shape and tbl_dom.get("rows"):
-          print("[Safety Net] Constructing table via deterministic builder because it was missing in executed code.")
+          logger.info("[Safety Net] Constructing table via deterministic builder because it was missing in executed code.")
           tbl_r = tbl_dom.get("rect", {})
           t_left = Inches(tbl_r.get("left", 0.6))
           t_top = Inches(tbl_r.get("top", 1.5))
@@ -524,7 +537,7 @@ def build_native_slide_from_code(
         for hl in slide_geometry.get("highlightBoxes", []):
           hl_snippet = hl["text"][:15].lower()
           if hl_snippet not in slide_text_corpus:
-            print(f"[Safety Net] Appending omitted highlight box: {hl['text'][:30]}...")
+            logger.info("[Safety Net] Appending omitted highlight box: %s...", hl["text"][:30])
             hl_r = hl.get("rect", {})
             hl_w = Inches(hl_r.get("width", 11.733))
             hl_l = Inches(hl_r.get("left", 0.8))
@@ -549,7 +562,7 @@ def build_native_slide_from_code(
         for fn in slide_geometry.get("footnotes", []):
           fn_snippet = fn["text"][:15].lower()
           if fn_snippet not in slide_text_corpus:
-            print(f"[Safety Net] Appending omitted footnote: {fn['text'][:30]}...")
+            logger.info("[Safety Net] Appending omitted footnote: %s...", fn["text"][:30])
             fn_r = fn.get("rect", {})
             fn_l = Inches(fn_r.get("left", 0.8))
             fn_t = Inches(fn_r.get("top", 7.0))
@@ -574,7 +587,7 @@ def build_native_slide_from_code(
       refine_card_accent_bars(slide)
       audit_and_resolve_slide_collisions(slide)
     else:
-      print("[Warn] 'build_slide' function not found and no shapes added.")
+      logger.warning("[Warn] 'build_slide' function not found and no shapes added.")
       if slide_geometry:
         build_slide_from_geometry(slide, slide_geometry, font_name=font_family, brand_color_rgb=brand_color)
         ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
@@ -597,9 +610,9 @@ def build_native_slide_from_code(
             height=prs.slide_height,
         )
   except Exception as e:
-    print(f"[Execution Error in generated slide code]: {e}")
+    logger.warning("[Execution Error in generated slide code]: %s", e)
     if slide_geometry:
-      print("[Fallback] Building native slide from exact DOM geometry on execution error.")
+      logger.info("[Fallback] Building native slide from exact DOM geometry on execution error.")
       build_slide_from_geometry(slide, slide_geometry, font_name=font_family, brand_color_rgb=brand_color)
       ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
       ensure_slide_typography_consistency(slide, default_font=font_family, default_color=default_text_color, is_dark=is_dark)
@@ -608,7 +621,7 @@ def build_native_slide_from_code(
       return
     # If DOM data has table, construct native table slide
     if slide_dom_data and slide_dom_data.get("tables"):
-      print("[Fallback] Building deterministic native table slide on execution error.")
+      logger.info("[Fallback] Building deterministic native table slide on execution error.")
       t_data = slide_dom_data["tables"][0]
       build_styled_native_table(slide, t_data, Inches(0.8), Inches(1.95), Inches(11.733), Inches(4.5))
       ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)

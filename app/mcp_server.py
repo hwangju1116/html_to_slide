@@ -130,18 +130,20 @@ def _stage_for_download(local_file_path: str) -> tuple[str, Optional[str]]:
 
 
 def _reload_converter_modules():
-    """Hot-reloads converter submodules in dependency order for live development."""
-    import importlib
-    import app.schemas as _m1
-    import app.color_utils as _m2
-    import app.js_geometry_extractor as _m3
-    import app.browser_renderer as _m4
-    import app.pptx_native_builders as _m5
-    import app.vision_fallback_builder as _m6
+    """Returns converter module, optionally hot-reloading submodules if MCP_DEV_RELOAD=1."""
     import app.html_to_pptx_converter as _conv_mod
 
-    for _mod in (_m1, _m2, _m3, _m4, _m5, _m6, _conv_mod):
-        importlib.reload(_mod)
+    if os.environ.get("MCP_DEV_RELOAD") == "1":
+        import importlib
+        import app.schemas as _m1
+        import app.color_utils as _m2
+        import app.js_geometry_extractor as _m3
+        import app.browser_renderer as _m4
+        import app.pptx_native_builders as _m5
+        import app.vision_fallback_builder as _m6
+
+        for _mod in (_m1, _m2, _m3, _m4, _m5, _m6, _conv_mod):
+            importlib.reload(_mod)
     return _conv_mod
 
 

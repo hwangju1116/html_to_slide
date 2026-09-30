@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -10,6 +11,8 @@ from google import genai
 from google.genai import types
 from app.genai_client import DEFAULT_GEMINI_MODEL, get_genai_client
 from app.schemas import SlideFidelityReport
+
+logger = logging.getLogger(__name__)
 
 
 def extract_slide_text_summary(slide: Any) -> str:
@@ -134,7 +137,7 @@ Output ONLY a valid JSON object strictly conforming to SlideFidelityReport schem
     if resp.text:
       return SlideFidelityReport.model_validate_json(resp.text)
   except Exception as e:
-    print(f"[SlideFidelityCritic Error]: {e}")
+    logger.warning("[SlideFidelityCritic Error]: %s", e)
 
   # Default fallback report if API call fails
   return SlideFidelityReport(

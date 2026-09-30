@@ -93,10 +93,10 @@ def resolve_style_color(
     """Resolves color from inline CSS style string using extracted :root CSS variables."""
     if not style_str:
         return default
-    m_var = re.search(r"color:\s*var\((--[a-zA-Z0-9_-]+)\)", style_str)
+    m_var = re.search(r"(?<![\w-])color\s*:\s*var\((--[a-zA-Z0-9_-]+)\)", style_str)
     if m_var and m_var.group(1) in css_vars_raw:
         return parse_color_value(css_vars_raw[m_var.group(1)], default)
-    m_hex = re.search(r"color:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\))", style_str)
+    m_hex = re.search(r"(?<![\w-])color\s*:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\))", style_str)
     if m_hex:
         return parse_color_value(m_hex.group(1), default)
     return default

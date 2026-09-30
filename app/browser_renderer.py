@@ -2,6 +2,7 @@ import asyncio
 import base64
 import concurrent.futures
 import json
+import logging
 import os
 import re
 import socket
@@ -13,6 +14,8 @@ import urllib.request
 import websockets
 
 from app.js_geometry_extractor import JS_SLIDE_GEOMETRY_EXTRACTOR
+
+logger = logging.getLogger(__name__)
 
 FONTS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "assets", "fonts"
@@ -214,7 +217,7 @@ def _prepare_slide_html(
   if has_target_id:
     # 1. Remove existing active class from all slide elements to prevent dual active rendering
     html = re.sub(
-        r'(class=["\'][^"\']*\b)active(\b[^"\']*["\'])',
+        r'(class=["\'][^"\']*(?<![\w-]))active((?![\w-])[^"\']*["\'])',
         r'\1\2',
         html,
     )
@@ -485,12 +488,12 @@ async def _capture_slides_cdp(
         try:
           raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
         except asyncio.TimeoutError:
-          print(f"[CDP Warning] Timeout waiting for {method} (id={curr_id})")
+          logger.warning("[CDP Warning] Timeout waiting for %s (id=%s)", method, curr_id)
           return {}
         msg = json.loads(raw)
         if msg.get("id") == curr_id:
           if "error" in msg:
-            print(f"[CDP Error in {method}]: {msg['error']}")
+            logger.warning("[CDP Error in %s]: %s", method, msg["error"])
             return {}
           return msg.get("result", {})
 
@@ -566,7 +569,7 @@ async def _capture_slides_cdp(
         layout_res = await send_recv("Runtime.evaluate", {"expression": js, "returnByValue": True})
         geom = layout_res.get("result", {}).get("value")
       except Exception as geom_err:
-        print(f"[CDP Layout Warning for {sid}]: {geom_err}")
+        logger.warning("[CDP Layout Warning for %s]: %s", sid, geom_err)
       captured_geometries.append(geom)
 
       res = await send_recv("Page.captureScreenshot", {"format": "png"})

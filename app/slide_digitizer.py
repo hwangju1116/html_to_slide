@@ -1,4 +1,5 @@
 import base64
+import logging
 import os
 import re
 import subprocess
@@ -8,6 +9,8 @@ from typing import Any, Dict, Optional, Union
 from google import genai
 from google.genai import types
 from app.genai_client import DEFAULT_GEMINI_MODEL, get_genai_client
+
+logger = logging.getLogger(__name__)
 
 
 def digitize_slide_image(
@@ -171,12 +174,13 @@ Output ONLY the raw Python script enclosed in ```python and ```.
         )
 
         if final_report.passed and final_report.score >= 7:
-          print(f"[Single Slide Fidelity Audit PASSED on Attempt {attempt}] Score: {final_report.score}/10")
+          logger.info("[Single Slide Fidelity Audit PASSED on Attempt %d] Score: %d/10", attempt, final_report.score)
           break
         else:
-          print(
-              f"[Single Slide Fidelity Audit REJECTED on Attempt {attempt}] Score: {final_report.score}/10."
-              f" Retrying with corrective directives..."
+          logger.warning(
+              "[Single Slide Fidelity Audit REJECTED on Attempt %d] Score: %d/10. Retrying with corrective directives...",
+              attempt,
+              final_report.score,
           )
           current_pptx_prompt = (
               base_pptx_prompt

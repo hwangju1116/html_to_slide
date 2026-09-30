@@ -25,11 +25,7 @@ terraform/terraform.tfvars
 *.pptx
 /tmp/
 
-# Local Binary Font Assets & Unit Tests
+# Local Binary Font Assets
 assets/fonts/
 *.otf
 *.ttf
-tests/
-
-
-

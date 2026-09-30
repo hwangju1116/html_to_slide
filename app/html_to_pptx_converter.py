@@ -1,4 +1,5 @@
 import concurrent.futures
+import logging
 import os
 import re
 import tempfile
@@ -7,6 +8,8 @@ import lxml.html
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches
+
+logger = logging.getLogger(__name__)
 
 from app.browser_renderer import (
     FALLBACK_FONTS_DIR,
@@ -323,59 +326,55 @@ def convert_html_to_pptx(
 
         slide_codes = [None] * len(captured_images)
         if native_mode and captured_images:
-            indices_needing_codegen = [
-                idx
-                for idx, _ in enumerate(captured_images)
-                if not (
-                    captured_geometries[idx]
-                    and (
-                        captured_geometries[idx].get("cards")
-                        or captured_geometries[idx].get("tables")
-                        or captured_geometries[idx].get("charts")
-                        or captured_geometries[idx].get("title")
-                    )
-                )
-            ]
-            if indices_needing_codegen:
-                max_workers = min(len(indices_needing_codegen), 2)
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {
-                        executor.submit(
-                            generate_native_slide_builder_code,
-                            captured_images[idx],
-                            slide_dom_data=slide_dom_list[idx],
-                            slide_geometry=captured_geometries[idx],
-                            design_tokens=global_tokens,
-                            slide_index=active_indices[idx] + 1,
-                            total_slides=total_deck_slides,
-                        ): idx
-                        for idx in indices_needing_codegen
-                    }
-                    for future in concurrent.futures.as_completed(futures):
-                        idx = futures[future]
-                        try:
-                            slide_codes[idx] = future.result()
-                        except Exception as e:
-                            print(f"[Semantic CodeGen Error for Slide {active_indices[idx]+1}]: {e}")
-                            slide_codes[idx] = None
+            max_workers = min(len(captured_images), 2)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        generate_native_slide_builder_code,
+                        img_path,
+                        slide_dom_data=slide_dom_list[idx],
+                        slide_geometry=captured_geometries[idx],
+                        design_tokens=global_tokens,
+                        slide_index=active_indices[idx] + 1,
+                        total_slides=total_deck_slides,
+                    ): idx
+                    for idx, img_path in enumerate(captured_images)
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        slide_codes[idx] = future.result()
+                    except Exception as e:
+                        logger.warning("[Semantic CodeGen Error for Slide %d]: %s", active_indices[idx] + 1, e)
+                        slide_codes[idx] = None
 
         for idx, img_path in enumerate(captured_images):
             slide = prs.slides.add_slide(blank_layout)
-            build_native_slide_from_code(
-                slide,
-                prs=prs,
-                code_str=slide_codes[idx],
-                fallback_img_path=img_path,
-                design_tokens=global_tokens,
-                slide_dom_data=slide_dom_list[idx],
-                slide_geometry=captured_geometries[idx],
-            )
+            if not native_mode:
+                slide.shapes.add_picture(
+                    img_path,
+                    Inches(0),
+                    Inches(0),
+                    width=prs.slide_width,
+                    height=prs.slide_height,
+                )
+            else:
+                build_native_slide_from_code(
+                    slide,
+                    prs=prs,
+                    code_str=slide_codes[idx],
+                    fallback_img_path=img_path,
+                    design_tokens=global_tokens,
+                    slide_dom_data=slide_dom_list[idx],
+                    slide_geometry=captured_geometries[idx],
+                )
 
-        harmonize_deck_presentation_fidelity(
-            prs,
-            default_font=global_tokens.get("font_name", "Pretendard"),
-            default_bg_hex=global_tokens.get("bg_color_hex"),
-        )
+        if native_mode:
+            harmonize_deck_presentation_fidelity(
+                prs,
+                default_font=global_tokens.get("font_name", "Pretendard"),
+                default_bg_hex=global_tokens.get("bg_color_hex"),
+            )
 
         os.makedirs(os.path.dirname(os.path.abspath(output_pptx_path)), exist_ok=True)
         prs.save(output_pptx_path)
@@ -388,6 +387,7 @@ def convert_html_to_pptx(
             "slide_ids": slide_ids,
             "output_pptx_path": output_pptx_path,
             "file_size_bytes": file_size,
+            "native_mode": native_mode,
         }
 
 
@@ -410,6 +410,12 @@ if __name__ == "__main__":
         action="store_true",
         default=True,
         help="Use native editable shapes (default: True)",
+    )
+    parser.add_argument(
+        "--no-native",
+        dest="native",
+        action="store_false",
+        help="Embed high-DPI slide screenshots instead of native shapes",
     )
 
     args = parser.parse_args()
