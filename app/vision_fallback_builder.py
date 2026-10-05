@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Any, Dict, Optional
 from google import genai
 from google.genai import types
@@ -22,6 +23,7 @@ from app.pptx_native_builders import (
     build_slide_from_geometry,
     build_styled_native_chart,
     build_styled_native_table,
+    embed_extracted_slide_images,
     ensure_slide_canvas_background,
     ensure_slide_typography_consistency,
     refine_card_accent_bars,
@@ -434,7 +436,13 @@ def build_native_slide_from_code(
 
   if not code_str:
     if slide_geometry:
-      build_slide_from_geometry(slide, slide_geometry, font_name=font_family, brand_color_rgb=brand_color)
+      build_slide_from_geometry(
+          slide,
+          slide_geometry,
+          font_name=font_family,
+          brand_color_rgb=brand_color,
+          screenshot_path=fallback_img_path,
+      )
       ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
       ensure_slide_typography_consistency(slide, default_font=font_family, default_color=default_text_color, is_dark=is_dark)
       refine_card_accent_bars(slide)
@@ -525,23 +533,35 @@ def build_native_slide_from_code(
                 slide_bg_rgb=(slide_bg_rgb[0], slide_bg_rgb[1], slide_bg_rgb[2]),
             )
 
-      # Safety Net: Zero Omission for Footnotes, Callouts, and Bottom Cards
+      # Safety Net: Zero Omission for SVG/IMG visuals, Footnotes, Callouts, and Bottom Cards
       if slide_geometry:
-        slide_text_corpus = " ".join([
+        embed_extracted_slide_images(slide, slide_geometry, fallback_img_path)
+
+        slide_text_corpus = re.sub(r"\s+", " ", " ".join([
             p.text for s in slide.shapes if s.has_text_frame for p in s.text_frame.paragraphs
         ] + [
             c.text for s in slide.shapes if s.has_table for row in s.table.rows for c in row.cells
-        ]).lower()
+        ])).lower()
 
         # Check highlight boxes
         for hl in slide_geometry.get("highlightBoxes", []):
-          hl_snippet = hl["text"][:15].lower()
-          if hl_snippet not in slide_text_corpus:
+          hl_norm = re.sub(r"^[^a-zA-Z0-9가-힣]+", "", re.sub(r"\s+", " ", hl.get("text", "")).strip()).lower()
+          hl_snippet = hl_norm[:18]
+          hl_r = hl.get("rect", {})
+          hl_l_in = float(hl_r.get("left", 0.8))
+          hl_t_in = float(hl_r.get("top", 6.5))
+          has_nearby_shape = any(
+              s.has_text_frame
+              and s.text_frame.text.strip()
+              and abs((s.left.inches if hasattr(s.left, "inches") else s.left / 914400.0) - hl_l_in) < 0.35
+              and abs((s.top.inches if hasattr(s.top, "inches") else s.top / 914400.0) - hl_t_in) < 0.35
+              for s in slide.shapes
+          )
+          if hl_snippet and hl_snippet not in slide_text_corpus and not has_nearby_shape:
             logger.info("[Safety Net] Appending omitted highlight box: %s...", hl["text"][:30])
-            hl_r = hl.get("rect", {})
             hl_w = Inches(hl_r.get("width", 11.733))
-            hl_l = Inches(hl_r.get("left", 0.8))
-            hl_t = Inches(hl_r.get("top", 6.5))
+            hl_l = Inches(hl_l_in)
+            hl_t = Inches(hl_t_in)
             hl_h = Inches(max(0.40, hl_r.get("height", 0.42)))
             hl_shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, hl_l, hl_t, hl_w, hl_h)
             hl_shape.fill.solid()
@@ -560,12 +580,22 @@ def build_native_slide_from_code(
 
         # Check footnotes
         for fn in slide_geometry.get("footnotes", []):
-          fn_snippet = fn["text"][:15].lower()
-          if fn_snippet not in slide_text_corpus:
+          fn_norm = re.sub(r"^[^a-zA-Z0-9가-힣]+", "", re.sub(r"\s+", " ", fn.get("text", "")).strip()).lower()
+          fn_snippet = fn_norm[:18]
+          fn_r = fn.get("rect", {})
+          fn_l_in = float(fn_r.get("left", 0.8))
+          fn_t_in = float(fn_r.get("top", 7.0))
+          has_nearby_fn = any(
+              s.has_text_frame
+              and s.text_frame.text.strip()
+              and abs((s.left.inches if hasattr(s.left, "inches") else s.left / 914400.0) - fn_l_in) < 0.45
+              and abs((s.top.inches if hasattr(s.top, "inches") else s.top / 914400.0) - fn_t_in) < 0.25
+              for s in slide.shapes
+          )
+          if fn_snippet and fn_snippet not in slide_text_corpus and not has_nearby_fn:
             logger.info("[Safety Net] Appending omitted footnote: %s...", fn["text"][:30])
-            fn_r = fn.get("rect", {})
-            fn_l = Inches(fn_r.get("left", 0.8))
-            fn_t = Inches(fn_r.get("top", 7.0))
+            fn_l = Inches(fn_l_in)
+            fn_t = Inches(fn_t_in)
             fn_w = Inches(fn_r.get("width", 11.733))
             fn_h = Inches(max(0.25, fn_r.get("height", 0.25)))
             fn_box = slide.shapes.add_textbox(fn_l, fn_t, fn_w, fn_h)
@@ -582,6 +612,8 @@ def build_native_slide_from_code(
       refine_card_accent_bars(slide)
       audit_and_resolve_slide_collisions(slide)
     elif len(slide.shapes) > 0:
+      if slide_geometry:
+        embed_extracted_slide_images(slide, slide_geometry, fallback_img_path)
       ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
       ensure_slide_typography_consistency(slide, default_font=font_family, default_color=default_text_color, is_dark=is_dark)
       refine_card_accent_bars(slide)
@@ -589,7 +621,13 @@ def build_native_slide_from_code(
     else:
       logger.warning("[Warn] 'build_slide' function not found and no shapes added.")
       if slide_geometry:
-        build_slide_from_geometry(slide, slide_geometry, font_name=font_family, brand_color_rgb=brand_color)
+        build_slide_from_geometry(
+            slide,
+            slide_geometry,
+            font_name=font_family,
+            brand_color_rgb=brand_color,
+            screenshot_path=fallback_img_path,
+        )
         ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
         ensure_slide_typography_consistency(slide, default_font=font_family, default_color=default_text_color, is_dark=is_dark)
         refine_card_accent_bars(slide)
@@ -613,7 +651,13 @@ def build_native_slide_from_code(
     logger.warning("[Execution Error in generated slide code]: %s", e)
     if slide_geometry:
       logger.info("[Fallback] Building native slide from exact DOM geometry on execution error.")
-      build_slide_from_geometry(slide, slide_geometry, font_name=font_family, brand_color_rgb=brand_color)
+      build_slide_from_geometry(
+          slide,
+          slide_geometry,
+          font_name=font_family,
+          brand_color_rgb=brand_color,
+          screenshot_path=fallback_img_path,
+      )
       ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
       ensure_slide_typography_consistency(slide, default_font=font_family, default_color=default_text_color, is_dark=is_dark)
       refine_card_accent_bars(slide)

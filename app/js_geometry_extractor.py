@@ -160,25 +160,24 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         if (prominent.length > 0) mainH = prominent[0];
     }
 
-    // Subtitle / Premise Discovery (strictly exclude mainH and cards/tables)
+    // Subtitle / Premise Discovery (strictly exclude mainH, containers, and bottom footnotes)
     let subDesc = Array.from(s.querySelectorAll('p.subtitle, p.premise, p.lead, p.cover-subtitle, h2.subtitle, [class*="subtitle"], [class*="premise"], p.text-slate-400')).find(el => {
         if (!mainH) return true;
         if (el === mainH || mainH.contains(el) || el.contains(mainH)) return false;
-        if (el.closest('.glass-card, .card, .panel, .info-card, table')) return false;
+        if (el.closest('.glass-card, .card, .panel, .info-card, .timeline, .pipe, .steps, .pcol, table')) return false;
+        const rIn = toIn(el.getBoundingClientRect());
+        if (rIn.top > 3.2) return false;
         return el.innerText.trim().length > 0;
     }) || null;
     if (!subDesc && mainH) {
-        let next = mainH.closest('.slide-head') ? mainH.closest('.slide-head').nextElementSibling : mainH.nextElementSibling;
-        while (next) {
-            if (next.tagName.toLowerCase() === 'p') {
-                subDesc = next;
-                break;
+        const headWrap = mainH.closest('.slide-head');
+        const cand = headWrap ? (headWrap.querySelector('p') || headWrap.nextElementSibling) : mainH.nextElementSibling;
+        if (cand && cand !== mainH && cand.tagName.toLowerCase() === 'p') {
+            const rIn = toIn(cand.getBoundingClientRect());
+            const txt = cand.innerText ? cand.innerText.trim() : '';
+            if (txt && rIn.top <= 2.8 && !txt.startsWith('※') && !txt.startsWith('*') && !txt.startsWith('출처')) {
+                subDesc = cand;
             }
-            if (next.querySelector('p') && !next.querySelector('.glass-card, .card, .panel, table')) {
-                subDesc = next.querySelector('p');
-                break;
-            }
-            next = next.nextElementSibling;
         }
     }
 
@@ -186,6 +185,8 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
     const headerBadges = [];
     const headerBadgeEls = [];
     const seenBadges = new Set();
+    const mainHTopIn = mainH ? toIn(mainH.getBoundingClientRect()).top : 1.0;
+    const maxBadgeTopIn = Math.max(1.45, mainHTopIn + 0.05);
     const addHeaderBadge = (el) => {
         if (!el || el === mainH || el === subDesc) return;
         if (mainH && (mainH.contains(el) || el.contains(mainH))) return;
@@ -194,7 +195,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         const txt = el.innerText ? el.innerText.trim().replace(/\\s+/g, ' ') : '';
         if (!txt || txt.length > 60 || seenBadges.has(txt)) return;
         const rIn = toIn(el.getBoundingClientRect());
-        if (rIn.width < 0.2 || rIn.height < 0.1 || rIn.top > 1.45) return;
+        if (rIn.width < 0.2 || rIn.height < 0.1 || rIn.top > maxBadgeTopIn) return;
         seenBadges.add(txt);
         headerBadgeEls.push(el);
         headerBadges.push({
@@ -204,21 +205,20 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         });
     };
 
-    s.querySelectorAll('.slide-head .eyebrow, .slide-head .badge-pill, .slide-head [class*="tag"], .slide-head [class*="badge"], .slide-head [class*="pill"], .slide-tag, [class*="eyebrow"]').forEach(addHeaderBadge);
+    s.querySelectorAll('.kicker, [class*="kicker"], .slide-head .eyebrow, .slide-head .badge-pill, .slide-head [class*="tag"], .slide-head [class*="badge"], .slide-head [class*="pill"], .slide-tag, [class*="eyebrow"]').forEach(addHeaderBadge);
 
     // Also discover top-of-slide eyebrows and header pills in non-.slide-head layouts (e.g. Tailwind decks)
-    const mainHTopIn = mainH ? toIn(mainH.getBoundingClientRect()).top : 1.0;
     s.querySelectorAll('div, span').forEach(el => {
         if (el.children.length > 2) return;
         if (el.querySelector('h1, h2, h3, p, div')) return;
         const rIn = toIn(el.getBoundingClientRect());
-        if (rIn.top > 1.35 || rIn.height > 0.45 || rIn.width > 4.5) return;
+        if (rIn.top > maxBadgeTopIn || rIn.height > 0.45 || rIn.width > 5.5) return;
         const cls = typeof el.className === 'string' ? el.className : '';
         const cs = window.getComputedStyle(el);
         const bg = extractBgColor(cs);
         const hasPillBg = bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== slideBg;
-        const isEyebrowAboveTitle = rIn.top < mainHTopIn && (cls.includes('uppercase') || cls.includes('tracking-') || parseInt(cs.fontWeight) >= 700);
-        const isHeaderPill = hasPillBg || cls.includes('badge') || cls.includes('rounded');
+        const isEyebrowAboveTitle = rIn.top < mainHTopIn && (cls.includes('uppercase') || cls.includes('tracking-') || cs.textTransform === 'uppercase' || parseInt(cs.fontWeight) >= 600);
+        const isHeaderPill = rIn.top <= 1.35 && (hasPillBg || cls.includes('badge') || cls.includes('rounded'));
         if (isEyebrowAboveTitle || isHeaderPill) {
             addHeaderBadge(el);
         }
@@ -226,19 +226,18 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
 
     const num = s.querySelector('.slide-number, [class*="slide-counter"], [class*="foot__n"]');
 
-    // Descriptions: ONLY non-subtitle cover/intro paragraphs to prevent duplicate rendering
-    const desc = [];
-    s.querySelectorAll('p.cover-desc, p.intro-desc').forEach(el => {
-        if (el !== subDesc) {
-            const txt = el.innerText.trim();
-            if (txt) {
-                desc.push({
-                    text: txt,
-                    rect: toIn(el.getBoundingClientRect()),
-                    styles: getStyles(el)
-                });
-            }
-        }
+    // Extract SVG and IMG visual elements (excluding tiny inline icons)
+    const images = [];
+    s.querySelectorAll('svg, img').forEach(el => {
+        if (el.parentElement && el.parentElement.closest('svg')) return;
+        const cs = window.getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) return;
+        const r = el.getBoundingClientRect();
+        if (r.width < 28 || r.height < 28) return;
+        images.push({
+            tagName: el.tagName.toLowerCase(),
+            rect: toIn(r)
+        });
     });
 
     // Extract Chart.js Canvases
@@ -293,10 +292,47 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         });
     });
 
+    // Highlight / Callout boxes discovered BEFORE cards so banners/callouts are never duplicated as cards
+    const hlBoxes = [];
+    const hlBoxEls = [];
+    const seenHl = new Set();
+    s.querySelectorAll('.foot__pocket, .highlight-box, .banner, [class*="highlight-box"], [class*="callout"]').forEach(hl => {
+        const txt = hl.innerText ? hl.innerText.trim().replace(/\\s*\\n\\s*/g, ' ') : '';
+        if (!txt || seenHl.has(txt)) return;
+        seenHl.add(txt);
+        hlBoxEls.push(hl);
+        hlBoxes.push({
+            rect: toIn(hl.getBoundingClientRect()),
+            styles: getStyles(hl),
+            text: txt
+        });
+    });
+    if (hlBoxes.length === 0) {
+        s.querySelectorAll('*').forEach(hl => {
+            if (hl.closest('table') || hl.querySelector('table')) return;
+            if (hl.querySelector('.foot__pocket, .banner, [class*="highlight-box"], [class*="callout"]')) return;
+            const txt = hl.innerText ? hl.innerText.trim().replace(/\\s*\\n\\s*/g, ' ') : '';
+            if (!txt || seenHl.has(txt)) return;
+            const isCallout = txt.startsWith('💡') || txt.startsWith('📌') || txt.startsWith('★') || 
+                              txt.startsWith('⚠️') || txt.startsWith('ℹ️') || txt.includes('핵심 메시지') ||
+                              txt.includes('핵심 요약') || txt.includes('참고') || txt.includes('결론');
+            if (isCallout && hl.offsetHeight < 320 && hl.offsetWidth > 150) {
+                seenHl.add(txt);
+                hlBoxEls.push(hl);
+                hlBoxes.push({
+                    rect: toIn(hl.getBoundingClientRect()),
+                    styles: getStyles(hl),
+                    text: txt
+                });
+            }
+        });
+    }
+
     const cardClassTokens = new Set([
         'panel', 'card', 'glass-card', 'info-card', 'pillar', 'ma-pillar',
         'runtime', 'sub-card', 'bridge-badge', 'bridge-col', 'f-item',
-        'serving-box', 'attach-card', 'oss-card', 'template-box'
+        'serving-box', 'attach-card', 'oss-card', 'template-box',
+        'viz', 'pcol', 'step', 'node', 'side'
     ]);
 
     const hasExplicitCardClass = (el) => {
@@ -304,11 +340,12 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         return cls.split(/\\s+/).some(t => cardClassTokens.has(t));
     };
 
-    // Universal Container Discovery: Panels, Columns, Cards, Pillars, Bridges
+    // Universal Container Discovery: Panels, Columns, Cards, Pillars, Bridges, Timeline Nodes
     const isTopContainer = (el) => {
         if (el === s || el.contains(s) || el.querySelector('table') || el.closest('table')) return false;
         if (el.closest('.slide-head') || el.closest('header') || el.closest('.foot') || el.closest('footer')) return false;
         if (headerBadgeEls.some(hb => hb === el || hb.contains(el) || el.contains(hb))) return false;
+        if (hlBoxEls.some(hb => hb === el || hb.contains(el) || el.contains(hb))) return false;
         if (num && (el === num || num.contains(el) || el.contains(num))) return false;
         if (mainH && (el === mainH || el.contains(mainH))) return false;
         if (subDesc && (el === subDesc || el.contains(subDesc))) return false;
@@ -349,6 +386,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         const r = toIn(c.getBoundingClientRect());
         const st = getStyles(c);
         const hasCanvas = !!c.querySelector('canvas');
+        const hasSvgOrImg = !!c.querySelector('svg, img');
 
         // Check Bridge connector
         const bridgeBadgeEl = c.querySelector('.bridge-badge') || (c.classList.contains('bridge-badge') ? c : null);
@@ -383,7 +421,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
 
         // Sub-cards (both explicit classes and inner styled boxes with background + border-radius)
         const rawSubCardCandidates = Array.from(c.querySelectorAll('div')).filter(sc => {
-            if (sc === c || sc.querySelector('canvas, table')) return false;
+            if (sc === c || sc.querySelector('canvas, table, svg')) return false;
             const scCls = typeof sc.className === 'string' ? sc.className : '';
             const isExplicitSub = /\\b(sub-card|serving-box|oss-card|template-box)\\b/.test(scCls) || scCls.includes('sub-card');
             if (isExplicitSub) return true;
@@ -401,13 +439,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
 
         const subCards = subCardEls.map(sc => {
             const scBadge = sc.querySelector('.badge, [class*="badge"]');
-            let scHead = sc.querySelector('.sub-card__head, h4, h5, [class*="font-bold"]');
-            if (!scHead) {
-                const strongCandidate = sc.querySelector('strong');
-                if (strongCandidate && sc.children.length > 1) {
-                    scHead = strongCandidate;
-                }
-            }
+            let scHead = sc.querySelector('.sub-card__head, h4, h5, [class*="font-bold"], b, strong');
             const headTxt = scHead ? scHead.innerText.replace(scBadge ? scBadge.innerText : '', '').trim() : '';
             const headStyles = scHead ? getStyles(scHead) : getStyles(sc);
             const scList = [];
@@ -420,9 +452,12 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
                     scList.push(t);
                 }
             });
-            if (!headTxt && scList.length === 0) {
-                const fullTxt = sc.innerText ? sc.innerText.trim() : '';
-                if (fullTxt) scList.push(fullTxt);
+            if (scList.length === 0) {
+                let remTxt = sc.innerText ? sc.innerText.trim() : '';
+                if (headTxt && remTxt.startsWith(headTxt)) {
+                    remTxt = remTxt.slice(headTxt.length).trim();
+                }
+                if (remTxt) scList.push(remTxt);
             }
             return {
                 rect: toIn(sc.getBoundingClientRect()),
@@ -439,7 +474,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         if (cHeading && subCardEls.some(sc => sc.contains(cHeading))) {
             cHeading = null;
         }
-        let tagEl = c.querySelector('.panel__tag, [class*="panel__tag"], span[class*="tag"], .ma-pillar__num');
+        let tagEl = c.querySelector('.panel__tag, [class*="panel__tag"], span[class*="tag"], .ma-pillar__num, .date, .no');
         if (tagEl && subCardEls.some(sc => sc.contains(tagEl))) {
             tagEl = null;
         }
@@ -453,25 +488,26 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
                 if (el.children.length > 1) return false;
                 const er = el.getBoundingClientRect();
                 const txt = el.innerText ? el.innerText.trim() : '';
-                if (!txt || txt.length > 32 || txt.length <= 2) return false;
+                if (!txt || txt.length > 32 || txt.length <= 1) return false;
                 const cs = window.getComputedStyle(el);
-                return er.top <= hTop && er.height < 36 && parseFloat(cs.fontSize) <= 15 && parseInt(cs.fontWeight) >= 600;
+                return er.top <= hTop && er.height < 42 && parseFloat(cs.fontSize) <= 24 && parseInt(cs.fontWeight) >= 600;
             });
             if (eyebrowCandidates.length > 0) {
                 tagEl = eyebrowCandidates[0];
             }
         }
 
-        // If no semantic heading tag (h2-h5), find first prominent bold heading inside card (outside subCards)
+        // If no semantic heading tag (h2-h5), find first prominent bold heading inside card (outside subCards), including <b> and <strong>
         if (!cHeading) {
-            const boldCandidates = Array.from(c.querySelectorAll('div, span')).filter(el => {
+            const boldCandidates = Array.from(c.querySelectorAll('div, span, b, strong')).filter(el => {
                 if (el === tagEl || (tagEl && (tagEl.contains(el) || el.contains(tagEl)))) return false;
                 if (subCardEls.some(sc => sc.contains(el) || el.contains(sc))) return false;
-                if (el.querySelector('div, p, ul, table, canvas')) return false;
+                if (el.closest('li, p, table, pre, code')) return false;
+                if (el.querySelector('div, p, ul, table, canvas, svg')) return false;
                 const txt = el.innerText ? el.innerText.trim() : '';
-                if (!txt || txt.length <= 3 || txt.length > 65) return false;
+                if (!txt || txt.length <= 1 || txt.length > 65) return false;
                 const cs = window.getComputedStyle(el);
-                return parseInt(cs.fontWeight) >= 700;
+                return parseInt(cs.fontWeight) >= 700 || el.tagName.toLowerCase() === 'b' || el.tagName.toLowerCase() === 'strong';
             });
             if (boldCandidates.length > 0) {
                 cHeading = boldCandidates[0];
@@ -488,8 +524,13 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         const titleRect = cHeading ? toIn(cHeading.getBoundingClientRect()) : null;
         const titleStyles = cHeading ? getStyles(cHeading) : null;
 
-        const cDescEl = c.querySelector('.panel__desc, .card-desc, .runtime__role');
-        const cardDesc = cDescEl ? cDescEl.innerText.trim() : '';
+        const cDescEl = c.querySelector('.panel__desc, .card-desc, .runtime__role, p.one');
+        const cardDesc = (cDescEl && (!subCardEls.some(sc => sc.contains(cDescEl)))) ? cDescEl.innerText.trim() : '';
+        const cardDescObj = (cDescEl && cardDesc) ? {
+            text: cardDesc,
+            rect: toIn(cDescEl.getBoundingClientRect()),
+            styles: getStyles(cDescEl)
+        } : null;
 
         // Pipeline steps
         const pipeStepEls = Array.from(c.querySelectorAll('.ma-pipe-step, [class*="pipe-step"], [class*="step-item"]'));
@@ -538,10 +579,11 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             };
         });
 
-        // Code blocks & spec blocks
+        // Code blocks & spec blocks (only block-level or standalone code blocks, not inline <code> inside paragraphs/list items)
         const codeBlocks = [];
-        c.querySelectorAll('pre, code, .code-block, [class*="code"]').forEach(cb => {
-            if (cb.tagName.toLowerCase() === 'code' && cb.parentElement && cb.parentElement.tagName.toLowerCase() === 'pre') return;
+        c.querySelectorAll('pre, .file, .code-block, [class*="code"]').forEach(cb => {
+            if (cb.closest('li, p')) return;
+            if (subCardEls.some(sc => sc.contains(cb) || cb.contains(sc))) return;
             const txt = cb.innerText.trim();
             if (txt) {
                 codeBlocks.push({
@@ -578,6 +620,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             c.querySelectorAll('p, li, div, span').forEach(el => {
                 if (el === c || el === cHeading || el === cDescEl || el === tagEl) return;
                 if (cHeading && (cHeading.contains(el) || el.contains(cHeading))) return;
+                if (cDescEl && (cDescEl.contains(el) || el.contains(cDescEl))) return;
                 if (tagEl && (tagEl.contains(el) || el.contains(tagEl))) return;
                 if (badgeEls.some(b => b === el || b.contains(el) || el.contains(b))) return;
                 if (subCardEls.some(sc => sc === el || sc.contains(el) || el.contains(sc))) return;
@@ -585,14 +628,13 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
                 if (fItemEls.some(fi => fi.contains(el) || el.contains(fi))) return;
                 if (pipeStepEls.some(ps => ps.contains(el) || el.contains(ps))) return;
                 if (codeBlocks.some(cb => cb.text === (el.innerText ? el.innerText.trim() : ''))) return;
-                if (el.querySelector('p, li, div, ul, ol, table, pre, canvas')) return;
+                if (el.querySelector('p, li, div, ul, ol, table, pre, canvas, svg')) return;
                 if (el.tagName.toLowerCase() === 'span') {
                     if (leafBlockEls.some(lb => lb.contains(el))) return;
                     if (el.querySelector('span')) return;
                 }
                 const rawTxt = el.innerText ? el.innerText.trim().replace(/\\s*\\n\\s*/g, '  ') : '';
                 if (!rawTxt || seenTexts.has(rawTxt)) return;
-                // Skip if rawTxt is already a substring of or contains a seen heading
                 if (cardTitle && (cardTitle.includes(rawTxt) || rawTxt.includes(cardTitle)) && rawTxt.length <= cardTitle.length + 4) return;
                 seenTexts.add(rawTxt);
                 leafBlockEls.push(el);
@@ -603,6 +645,26 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
                     styles: getStyles(el)
                 });
             });
+
+            // Fallback for leaf containers (e.g. <span class="tag">Text</span> or <div><b>Heading</b>Direct text</div>)
+            if (paras.length === 0 && subCards.length === 0 && codeBlocks.length === 0) {
+                let directTxt = c.innerText ? c.innerText.trim() : '';
+                if (cardTitle && directTxt.startsWith(cardTitle)) {
+                    directTxt = directTxt.slice(cardTitle.length).trim();
+                }
+                if (tagData && directTxt.startsWith(tagData.text)) {
+                    directTxt = directTxt.slice(tagData.text.length).trim();
+                }
+                directTxt = directTxt.replace(/\\s*\\n\\s*/g, '  ').trim();
+                if (directTxt && !seenTexts.has(directTxt)) {
+                    paras.push({
+                        text: directTxt,
+                        isList: false,
+                        rect: r,
+                        styles: st
+                    });
+                }
+            }
         }
 
         cards.push({
@@ -615,6 +677,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             hasLeftAccent: st.borderLeftWidth >= 3,
             leftAccentColor: st.borderLeftColor,
             hasCanvas: hasCanvas,
+            hasSvgOrImg: hasSvgOrImg,
             isBridge: isBridge,
             bridge: bridgeData,
             isAttachCard: isAttachCard,
@@ -623,7 +686,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             title: cardTitle,
             titleRect: titleRect,
             titleStyles: titleStyles,
-            desc: cardDesc,
+            desc: cardDescObj,
             pipelineSteps: pipeSteps,
             subCards: subCards,
             flows: flows,
@@ -687,46 +750,15 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         });
     });
 
-    // Highlight / Callout boxes (strictly exclude wrappers like div.foot that contain .foot__pocket)
-    const hlBoxes = [];
-    const seenHl = new Set();
-    s.querySelectorAll('.foot__pocket, .highlight-box, [class*="highlight-box"], [class*="callout"]').forEach(hl => {
-        const txt = hl.innerText ? hl.innerText.trim() : '';
-        if (!txt || seenHl.has(txt)) return;
-        seenHl.add(txt);
-        hlBoxes.push({
-            rect: toIn(hl.getBoundingClientRect()),
-            styles: getStyles(hl),
-            text: txt
-        });
-    });
-    if (hlBoxes.length === 0) {
-        s.querySelectorAll('*').forEach(hl => {
-            if (hl.closest('table') || hl.querySelector('table')) return;
-            if (hl.querySelector('.foot__pocket, [class*="highlight-box"], [class*="callout"]')) return;
-            const txt = hl.innerText ? hl.innerText.trim() : '';
-            if (!txt || seenHl.has(txt)) return;
-            const isCallout = txt.startsWith('💡') || txt.startsWith('📌') || txt.startsWith('★') || 
-                              txt.startsWith('⚠️') || txt.startsWith('ℹ️') || txt.includes('핵심 메시지') ||
-                              txt.includes('핵심 요약') || txt.includes('참고') || txt.includes('결론');
-            if (isCallout && hl.offsetHeight < 320 && hl.offsetWidth > 150) {
-                seenHl.add(txt);
-                hlBoxes.push({
-                    rect: toIn(hl.getBoundingClientRect()),
-                    styles: getStyles(hl),
-                    text: txt
-                });
-            }
-        });
-    }
-
     // Footnotes / Bottom notes (strictly leaf elements, including bottom footer bar items)
     const footnotes = [];
+    const footnoteEls = [];
     const seenFn = new Set();
     s.querySelectorAll('.foot__n, .footnote, [class*="footnote"], [class*="bottom-note"]').forEach(el => {
         const txt = el.innerText ? el.innerText.trim() : '';
         if (!txt || seenFn.has(txt)) return;
         seenFn.add(txt);
+        footnoteEls.push(el);
         footnotes.push({
             rect: toIn(el.getBoundingClientRect()),
             styles: getStyles(el),
@@ -735,8 +767,10 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
     });
     if (footnotes.length === 0) {
         s.querySelectorAll('p, div, span, small').forEach(el => {
+            if (el === subDesc || el === mainH) return;
             if (el.querySelector('p, div, span, table')) return;
             if (topContainers.some(tc => tc.contains(el))) return;
+            if (hlBoxEls.some(hb => hb.contains(el))) return;
             const txt = el.innerText ? el.innerText.trim() : '';
             if (!txt || seenFn.has(txt)) return;
             const r = toIn(el.getBoundingClientRect());
@@ -745,6 +779,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
                                (r.top > 6.4 && r.height < 0.55);
             if (isFootnote && r.top > 3.5) {
                 seenFn.add(txt);
+                footnoteEls.push(el);
                 footnotes.push({
                     rect: r,
                     styles: getStyles(el),
@@ -753,6 +788,26 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             }
         });
     }
+
+    // Standalone Descriptions & Uncaptured Leaf Texts (e.g. cover meta, standalone arrows, labels)
+    const desc = [];
+    const seenDesc = new Set();
+    s.querySelectorAll('p.cover-desc, p.intro-desc, div.meta, div.arrow, span.x').forEach(el => {
+        if (el === subDesc || el === mainH) return;
+        if (topContainers.some(tc => tc === el || tc.contains(el))) return;
+        if (hlBoxEls.some(hb => hb === el || hb.contains(el))) return;
+        if (footnoteEls.some(fn => fn === el || fn.contains(el))) return;
+        if (headerBadgeEls.some(hb => hb === el || hb.contains(el))) return;
+        const txt = el.innerText ? el.innerText.trim() : '';
+        if (txt && !seenDesc.has(txt)) {
+            seenDesc.add(txt);
+            desc.push({
+                text: txt,
+                rect: toIn(el.getBoundingClientRect()),
+                styles: getStyles(el)
+            });
+        }
+    });
 
     return {
         id: targetId,
@@ -763,6 +818,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         title: mainH ? { text: mainH.innerText.trim(), rect: toIn(mainH.getBoundingClientRect()), styles: getStyles(mainH) } : null,
         sub: subDesc ? { text: subDesc.innerText.trim(), rect: toIn(subDesc.getBoundingClientRect()), styles: getStyles(subDesc) } : null,
         desc: desc,
+        images: images,
         cards: cards,
         charts: charts,
         tables: tables,

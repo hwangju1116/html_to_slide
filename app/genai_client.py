@@ -91,7 +91,30 @@ def verify_gcp_auth(explicit_project: Optional[str] = None) -> tuple[bool, str, 
     if os.environ.get("K_SERVICE"):
         return True, project_id, ""
 
-    # 2. Check Application Default Credentials file or google.auth
+    # 2. Check Application Default Credentials and verify token is not expired
+    try:
+        import google.auth
+        import google.auth.transport.requests
+
+        creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        if creds is not None:
+            if not creds.valid:
+                creds.refresh(google.auth.transport.requests.Request())
+            return True, project_id, ""
+    except Exception as auth_exc:
+        if "reauthentication is needed" in str(auth_exc).lower():
+            return (
+                False,
+                project_id,
+                (
+                    f"GCP Application Default Credentials(ADC) 인증이 만료되었습니다 (Project: {project_id}).\n"
+                    "터미널에서 아래 명령어를 실행해 재인증한 뒤 다시 시도해 주세요:\n"
+                    "  gcloud auth application-default login"
+                ),
+            )
+
     gcloud_dir = os.environ.get(
         "CLOUDSDK_CONFIG", os.path.expanduser("~/.config/gcloud")
     )
@@ -101,17 +124,6 @@ def verify_gcp_auth(explicit_project: Optional[str] = None) -> tuple[bool, str, 
     )
     if os.path.isfile(adc_file):
         return True, project_id, ""
-
-    try:
-        import google.auth
-
-        creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        if creds is not None:
-            return True, project_id, ""
-    except Exception:
-        pass
 
     # 3. Fallback: check active gcloud CLI authenticated account
     try:

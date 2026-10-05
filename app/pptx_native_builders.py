@@ -603,11 +603,73 @@ def ensure_slide_canvas_background(
       pass
 
 
+def embed_extracted_slide_images(
+    slide,
+    geom: Optional[Dict[str, Any]],
+    screenshot_path: Optional[str],
+) -> None:
+  """Crops and embeds <svg> and <img> visual regions from the high-DPI slide screenshot onto the slide."""
+  if not geom or not screenshot_path or not geom.get("images"):
+    return
+
+  try:
+    from PIL import Image
+    import os
+
+    if not os.path.exists(screenshot_path):
+      return
+
+    with Image.open(screenshot_path) as full_img:
+      img_w, img_h = full_img.size
+      for img_info in geom.get("images", []):
+        r = img_info.get("rect", {})
+        left_in = float(r.get("left", 0.0))
+        top_in = float(r.get("top", 0.0))
+        width_in = float(r.get("width", 0.0))
+        height_in = float(r.get("height", 0.0))
+        if width_in < 0.25 or height_in < 0.25:
+          continue
+
+        # Skip if a picture already exists near this position
+        already_embedded = False
+        for s in slide.shapes:
+          if getattr(s, "shape_type", None) == 13:  # PICTURE
+            s_l = s.left.inches if hasattr(s.left, "inches") else s.left / 914400.0
+            s_t = s.top.inches if hasattr(s.top, "inches") else s.top / 914400.0
+            if abs(s_l - left_in) < 0.35 and abs(s_t - top_in) < 0.35:
+              already_embedded = True
+              break
+        if already_embedded:
+          continue
+
+        px_l = max(0, int(round((left_in / 13.333333) * img_w)))
+        px_t = max(0, int(round((top_in / 7.5) * img_h)))
+        px_r = min(img_w, int(round(((left_in + width_in) / 13.333333) * img_w)))
+        px_b = min(img_h, int(round(((top_in + height_in) / 7.5) * img_h)))
+        if px_r - px_l < 10 or px_b - px_t < 10:
+          continue
+
+        cropped = full_img.crop((px_l, px_t, px_r, px_b))
+        bio = io.BytesIO()
+        cropped.save(bio, format="PNG")
+        bio.seek(0)
+        slide.shapes.add_picture(
+            bio,
+            Inches(left_in),
+            Inches(top_in),
+            Inches(width_in),
+            Inches(height_in),
+        )
+  except Exception as e:
+    logger.warning("Failed to embed extracted slide images: %s", e)
+
+
 def build_slide_from_geometry(
     slide,
     geom: Dict[str, Any],
     font_name: str = "Pretendard",
     brand_color_rgb: Optional[RGBColor] = None,
+    screenshot_path: Optional[str] = None,
 ) -> None:
   """Deterministically constructs a pixel-faithful native PowerPoint slide from browser-measured DOM layout geometry."""
   if not geom:
@@ -770,13 +832,25 @@ def build_slide_from_geometry(
       continue
 
     # Normal Container / Card
+    raw_c_bg = (card.get("styles", {}).get("backgroundColor") or "").strip()
+    raw_c_border = (card.get("styles", {}).get("borderColor") or "").strip()
+    has_c_bg = bool(raw_c_bg and raw_c_bg not in ("transparent", "rgba(0, 0, 0, 0)", "none"))
+    has_c_border = bool(raw_c_border and raw_c_border not in ("transparent", "rgba(0, 0, 0, 0)", "none"))
+
     c_shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, c_left, c_top, c_w, c_h)
-    c_shape.fill.solid()
-    c_bg = parse_color_value(card["styles"]["backgroundColor"], RGBColor(30, 41, 59) if is_dark else RGBColor(255, 255, 255), bg_blend_rgb=blend_rgb)
-    c_border = parse_color_value(card["styles"].get("borderColor"), RGBColor(51, 65, 85) if is_dark else RGBColor(226, 232, 240), bg_blend_rgb=blend_rgb)
-    c_shape.fill.fore_color.rgb = c_bg
-    c_shape.line.color.rgb = c_border
-    c_shape.line.width = Pt(1.0)
+    if has_c_bg:
+      c_shape.fill.solid()
+      c_bg = parse_color_value(raw_c_bg, RGBColor(30, 41, 59) if is_dark else RGBColor(255, 255, 255), bg_blend_rgb=blend_rgb)
+      c_shape.fill.fore_color.rgb = c_bg
+    else:
+      c_shape.fill.background()
+
+    if has_c_border:
+      c_border = parse_color_value(raw_c_border, RGBColor(51, 65, 85) if is_dark else RGBColor(226, 232, 240), bg_blend_rgb=blend_rgb)
+      c_shape.line.color.rgb = c_border
+      c_shape.line.width = Pt(1.0)
+    else:
+      c_shape.line.fill.background()
 
     # Handle Attach Card
     if card.get("isAttachCard") and card.get("attachData"):
@@ -1154,7 +1228,7 @@ def build_slide_from_geometry(
     # Remaining Paragraphs & List Items
     paras = card.get("paragraphs", [])
     if paras and not card.get("pipelineSteps"):
-      if card.get("subCards") or card.get("hasCanvas"):
+      if card.get("subCards") or card.get("hasCanvas") or card.get("hasSvgOrImg") or card.get("codeBlocks"):
         for para in paras:
           pr = para.get("rect", {})
           if not pr:
@@ -1307,6 +1381,9 @@ def build_slide_from_geometry(
     )
     if is_right_fn:
       p.alignment = PP_ALIGN.RIGHT
+
+  # 12. Embedded SVG & Image Visuals
+  embed_extracted_slide_images(slide, geom, screenshot_path)
 
 
 def ensure_slide_typography_consistency(

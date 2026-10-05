@@ -140,7 +140,7 @@ resource "google_cloud_run_v2_service" "mcp_server" {
   ]
 }
 
-# 6. Optional public invoker binding for SSE MCP clients
+# 6. Optional public invoker binding for MCP clients
 resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
   count    = var.allow_unauthenticated ? 1 : 0
   project  = var.project_id
@@ -150,7 +150,7 @@ resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
   member   = "allUsers"
 }
 
-# 7. Automatically register the deployed Cloud Run SSE URL & Skill into local ~/.gemini/config
+# 7. Automatically register the deployed Cloud Run MCP URL & Skill into local ~/.gemini/config
 resource "terraform_data" "register_local_antigravity" {
   count = var.register_local_antigravity ? 1 : 0
 
