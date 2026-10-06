@@ -7,15 +7,6 @@ def hex_to_rgb_tuple(
     hex_str: Optional[str],
     default: Tuple[int, int, int] = (30, 41, 59),
 ) -> Tuple[int, int, int]:
-    """Converts a #RRGGBB or #RGB hex string to an (r, g, b) integer tuple.
-
-    Args:
-        hex_str: Hex color string (e.g. '#FFFFFF', '#fff', '1E293B').
-        default: Fallback (r, g, b) tuple if parsing fails.
-
-    Returns:
-        (r, g, b) tuple where each component is 0-255.
-    """
     if not hex_str or not isinstance(hex_str, str):
         return default
     hex_clean = hex_str.strip().lstrip("#")
@@ -37,13 +28,11 @@ def hex_to_pptx_color(
     hex_str: Optional[str],
     default: Tuple[int, int, int] = (30, 41, 59),
 ) -> RGBColor:
-    """Converts a hex string to a python-pptx RGBColor object."""
     r, g, b = hex_to_rgb_tuple(hex_str, default=default)
     return RGBColor(r, g, b)
 
 
 def extract_root_css_vars(html_content: str) -> Dict[str, str]:
-    """Extracts all :root CSS custom properties (--var: val) from HTML."""
     var_map = {}
     matches = re.findall(r"(--[a-zA-Z0-9_-]+)\s*:\s*([^;}\n]+)", html_content)
     for k, v in matches:
@@ -56,7 +45,6 @@ def parse_color_value(
     default: Optional[RGBColor] = RGBColor(17, 17, 21),
     bg_blend_rgb: Tuple[int, int, int] = (255, 255, 255),
 ) -> Optional[RGBColor]:
-    """Parses HEX string (#RRGGBB) or rgba(r,g,b,a) with configurable canvas alpha blending into RGBColor."""
     if not val or not isinstance(val, str):
         return default
     val = val.strip()
@@ -90,7 +78,6 @@ def resolve_style_color(
     css_vars_raw: Dict[str, str],
     default: RGBColor = RGBColor(17, 17, 21),
 ) -> RGBColor:
-    """Resolves color from inline CSS style string using extracted :root CSS variables."""
     if not style_str:
         return default
     m_var = re.search(r"(?<![\w-])color\s*:\s*var\((--[a-zA-Z0-9_-]+)\)", style_str)
@@ -103,11 +90,9 @@ def resolve_style_color(
 
 
 def extract_global_design_tokens(
-    first_image_path: str = "",
     raw_html: Optional[str] = None,
     first_slide_geometry: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Extracts or derives unified design tokens (brand colors, font family, typography hierarchy) for the presentation deck."""
     tokens = {
         "font_name": "Pretendard",
         "brand_color_hex": "#2563EB",

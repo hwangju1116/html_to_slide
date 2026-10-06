@@ -10,10 +10,16 @@ import subprocess
 import tempfile
 import time
 from typing import Any, Dict, List, Optional
+import sys
+from pathlib import Path
 import urllib.request
 import websockets
 
-from app.js_geometry_extractor import JS_SLIDE_GEOMETRY_EXTRACTOR
+SKILL_ROOT = str(Path(__file__).resolve().parent.parent)
+if SKILL_ROOT not in sys.path:
+  sys.path.insert(0, SKILL_ROOT)
+
+from scripts.js_geometry_extractor import JS_SLIDE_GEOMETRY_EXTRACTOR
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +32,6 @@ FALLBACK_FONTS_DIR = os.path.expanduser("~/.local/share/fonts")
 
 
 def _find_free_port() -> int:
-  """Finds an available TCP port dynamically."""
   with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind(("", 0))
     s.listen(1)
@@ -35,7 +40,6 @@ def _find_free_port() -> int:
 
 
 def _get_font_path(font_filename: str) -> str:
-  """Resolves the font path from package assets, local user font cache, or container font cache."""
   candidates = [
       os.path.join(FONTS_DIR, font_filename),
       os.path.join(FALLBACK_FONTS_DIR, "pretendard", font_filename),
@@ -49,8 +53,6 @@ def _get_font_path(font_filename: str) -> str:
 
 
 def _tag_slide_ids_in_html(html_str: str) -> tuple[str, List[str]]:
-  """Ensures all slide elements have explicit unique id='slide-N' attributes."""
-  # Match slide containers without falsely matching inner elements like slide-head, slide-title, slide-content
   pattern = re.compile(
       r'(<(?:div|section|article)[^>]*class=["\'][^"\']*(?<![\w-])(?:slide|slide-view|page)(?![\w-])[^"\']*["\'][^>]*)>',
       re.IGNORECASE,
@@ -76,18 +78,14 @@ def _tag_slide_ids_in_html(html_str: str) -> tuple[str, List[str]]:
 
 
 def _extract_slide_ids(html_content: str) -> List[str]:
-  """Dynamically extracts or generates slide IDs from HTML."""
-  # 1. Tag and extract all authentic slide elements (div, section, article)
   _, auto_ids = _tag_slide_ids_in_html(html_content)
   if auto_ids:
     return list(dict.fromkeys(auto_ids))
 
-  # 2. Look for id="slide-\d+"
   slide_ids = re.findall(r'id=["\'](slide-\d+)["\']', html_content, re.IGNORECASE)
   if slide_ids:
     return list(dict.fromkeys(slide_ids))
 
-  # 3. Look for <section id="...">
   section_ids = re.findall(
       r'<section[^>]*id=["\']([^"\']+)["\']', html_content, re.IGNORECASE
   )
@@ -100,16 +98,13 @@ def _extract_slide_ids(html_content: str) -> List[str]:
 def _prepare_slide_html(
     raw_html: str, target_slide_id: str, slide_index: int, base_dir: str
 ) -> str:
-  """Prepares clean, self-contained HTML for a single slide with local fonts and asset URLs."""
   html = raw_html
 
-  # 0. Clean markdown code fences if wrapped
   if "```html" in html:
     html = html.split("```html", 1)[1].split("```", 1)[0].strip()
   elif "```" in html and "<html" in html:
     html = html.split("```", 1)[1].split("```", 1)[0].strip()
 
-  # 1. Clean out ALL external blocking links/imports and rewrite remote tailwind/chart.js scripts to local assets
   html = re.sub(
       r"@import\s+url\(\s*['\"]?https?://[^)]+\)\s*;?",
       "",
@@ -170,7 +165,6 @@ def _prepare_slide_html(
         html,
         flags=re.IGNORECASE,
     )
-  # Remove any remaining external http/https script tags to avoid network timeouts in headless Chrome
   html = re.sub(
       r'<script[^>]*src=["\']https?://[^"\']*["\'][^>]*>\s*</script>',
       "",
@@ -178,7 +172,6 @@ def _prepare_slide_html(
       flags=re.IGNORECASE,
   )
 
-  # 2. Fix relative image and svg src paths to absolute file:// URLs
   def fix_src(match):
     src = match.group(1)
     if (
@@ -193,7 +186,6 @@ def _prepare_slide_html(
 
   html = re.sub(r'src=["\']([^"\']+)["\']', fix_src, html)
 
-  # 3. Resolve fonts (official Pretendard + Noto Sans KR fallbacks)
   regular_font = _get_font_path("NotoSansKR-Regular.otf")
   medium_font = _get_font_path("NotoSansKR-Medium.otf")
   bold_font = _get_font_path("NotoSansKR-Bold.otf")
@@ -206,22 +198,18 @@ def _prepare_slide_html(
   pret_xbold = _get_font_path("Pretendard-ExtraBold.otf")
   pret_black = _get_font_path("Pretendard-Black.otf")
 
-  # 4. Normalize slide IDs across diverse deck formats
   html, _ = _tag_slide_ids_in_html(html)
 
-  # Detect multi-slide tabs or multiple slides targeting
   has_target_id = bool(
       re.search(rf'id=["\']{re.escape(target_slide_id)}["\']', html, re.IGNORECASE)
   )
 
   if has_target_id:
-    # 1. Remove existing active class from all slide elements to prevent dual active rendering
     html = re.sub(
         r'(class=["\'][^"\']*(?<![\w-]))active((?![\w-])[^"\']*["\'])',
         r'\1\2',
         html,
     )
-    # 2. Add active class to target_slide_id element so its intended CSS styles apply naturally
     def _add_active_to_target(match):
       full_tag = match.group(0)
       if "class=" in full_tag:
@@ -235,7 +223,6 @@ def _prepare_slide_html(
         html,
     )
 
-    # 3. Synchronize data-active attribute for data-active driven presentations
     html = re.sub(r'data-active=["\'][^"\']*["\']', 'data-active="false"', html)
     html = re.sub(
         rf'(<[^>]+id=["\']{re.escape(target_slide_id)}["\'][^>]*?)data-active=["\'][^"\']*["\']',
@@ -419,13 +406,11 @@ def _prepare_slide_html(
     {multi_slide_css}
     """
 
-  # Inject custom CSS
   if "</head>" in html:
     html = html.replace("</head>", f"<style>{custom_css}</style>\n</head>")
   else:
     html = f"<head><style>{custom_css}</style></head>\n" + html
 
-  # Override JS slide state if present (0-based for currentSlide/idx)
   zero_idx = max(0, slide_index - 1)
   html = re.sub(
       r"(let|var|const)\s+(currentSlide|currentSlideIndex|activeIndex|activeSlide|current|slideIdx|idx)\s*=\s*\d+;",
@@ -441,18 +426,14 @@ def _prepare_slide_html(
   return html
 
 
-async def _capture_slides_cdp(
+async def _extract_slides_cdp(
     slide_items: List[Any],
     port: int,
-    profile_dir: str,
-    output_dir: str,
     scale_factor: int = 2,
-) -> tuple[List[str], List[Optional[Dict[str, Any]]]]:
-  """Connects to headless Chrome via CDP and captures high-res PNGs and exact DOM layout geometries."""
-  captured_paths = []
-  captured_geometries = []
+) -> tuple[List[Optional[Dict[str, Any]]], List[Optional[bytes]]]:
+  extracted_geometries: List[Optional[Dict[str, Any]]] = []
+  extracted_image_buffers: List[Optional[bytes]] = []
 
-  # Wait for CDP to respond
   for _ in range(30):
     try:
       with urllib.request.urlopen(
@@ -462,7 +443,6 @@ async def _capture_slides_cdp(
     except Exception:
       await asyncio.sleep(0.3)
 
-  # Create a new tab
   req = urllib.request.Request(f"http://127.0.0.1:{port}/json/new", method="PUT")
   with urllib.request.urlopen(req, timeout=5) as resp:
     tab_info = json.loads(resp.read().decode())
@@ -520,7 +500,6 @@ async def _capture_slides_cdp(
       file_url = f"file://{os.path.abspath(slide_file)}"
       await send_recv("Page.navigate", {"url": file_url}, timeout=8.0)
 
-      # Wait for DOM to be interactive / complete
       try:
         await send_recv(
             "Runtime.evaluate",
@@ -540,7 +519,6 @@ async def _capture_slides_cdp(
       except Exception:
         pass
 
-      # Wait for local font files (Pretendard/Noto Sans KR) with bounded race
       try:
         await send_recv(
             "Runtime.evaluate",
@@ -559,10 +537,8 @@ async def _capture_slides_cdp(
       except Exception:
         await asyncio.sleep(0.2)
 
-      # Brief stabilization buffer for DOM reflow
       await asyncio.sleep(0.1)
 
-      # Extract exact browser-measured DOM geometry directly from rendered layout (and sync Chart.js / FA icons)
       geom = None
       try:
         js = JS_SLIDE_GEOMETRY_EXTRACTOR.replace("%SLIDE_ID%", str(sid)).replace("%SLIDE_IDX_0%", str(slide_idx_0))
@@ -570,26 +546,24 @@ async def _capture_slides_cdp(
         geom = layout_res.get("result", {}).get("value")
       except Exception as geom_err:
         logger.warning("[CDP Layout Warning for %s]: %s", sid, geom_err)
-      captured_geometries.append(geom)
+      extracted_geometries.append(geom)
 
-      res = await send_recv("Page.captureScreenshot", {"format": "png"})
-      if "data" in res:
-        img_bytes = base64.b64decode(res["data"])
-        out_png = os.path.join(output_dir, f"slide-{idx}.png")
-        with open(out_png, "wb") as f_out:
-          f_out.write(img_bytes)
-        captured_paths.append(out_png)
+      img_bytes = None
+      if geom and geom.get("images"):
+        res = await send_recv("Page.captureScreenshot", {"format": "png"})
+        if "data" in res:
+          img_bytes = base64.b64decode(res["data"])
+      extracted_image_buffers.append(img_bytes)
 
   try:
     urllib.request.urlopen(f"http://127.0.0.1:{port}/json/close/{target_id}")
   except Exception:
     pass
 
-  return captured_paths, captured_geometries
+  return extracted_geometries, extracted_image_buffers
 
 
 def _find_chrome_binary(custom_path: Optional[str] = None) -> str:
-  """Locates the available Chrome or Chromium binary executable."""
   candidates = [
       custom_path,
       os.environ.get("CHROME_BIN"),
@@ -607,7 +581,6 @@ def _find_chrome_binary(custom_path: Optional[str] = None) -> str:
 
 
 def _run_async_in_thread(coro_fn, *args, **kwargs):
-  """Safely executes an async coroutine even if invoked from within a running asyncio event loop (e.g. FastAPI / ADK)."""
   try:
     loop = asyncio.get_running_loop()
   except RuntimeError:
@@ -621,56 +594,24 @@ def _run_async_in_thread(coro_fn, *args, **kwargs):
     return asyncio.run(coro_fn(*args, **kwargs))
 
 
-def capture_html_slides(
+def extract_html_slides_geometry(
     html_input: str,
-    output_dir: Optional[str] = None,
     target_slide_id: Optional[str] = None,
     base_dir: Optional[str] = None,
     scale_factor: int = 2,
     chrome_binary: Optional[str] = None,
 ) -> Dict[str, Any]:
-  """Renders HTML presentation slides to 16:9 widescreen PNG images via headless Chrome CDP.
-
-  Args:
-      html_input: File path to .html or raw HTML string.
-      output_dir: Directory where captured PNG images will be stored. Defaults
-        to 'captures/'.
-      target_slide_id: Optional slide ID or number to capture only that slide.
-      base_dir: Base directory for resolving relative assets.
-      scale_factor: Device scale factor (default 2 for Retina quality).
-      chrome_binary: Path to Chrome executable.
-
-  Returns:
-      Dict with:
-          - 'success': bool
-          - 'slide_count': int
-          - 'slide_ids': List[str]
-          - 'image_paths': List[str] (absolute file paths)
-          - 'image_data_uris': List[str] (data:image/png;base64,...)
-          - 'output_dir': str
-  """
-  # 1. Determine whether html_input is a path or raw string
   if os.path.isfile(html_input):
     html_path = os.path.abspath(html_input)
     if not base_dir:
       base_dir = os.path.dirname(html_path)
-    base_name = os.path.splitext(os.path.basename(html_path))[0]
     with open(html_path, "r", encoding="utf-8") as f:
       raw_html = f.read()
   else:
     raw_html = html_input
-    base_name = "slide"
     if not base_dir:
       base_dir = os.getcwd()
 
-  if not output_dir:
-    output_dir = os.path.join(
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
-        "captures",
-    )
-  os.makedirs(output_dir, exist_ok=True)
-
-  # 2. Extract slide IDs dynamically
   all_slide_ids = _extract_slide_ids(raw_html)
   if not all_slide_ids:
     raise ValueError("No slide elements detected in the provided HTML content.")
@@ -697,7 +638,6 @@ def capture_html_slides(
   slide_ids = [t[1] for t in target_tuples]
 
   with tempfile.TemporaryDirectory() as tmpdir:
-    # 3. Generate individual temporary HTML files for each slide
     temp_slide_files = []
     for orig_idx, sid in target_tuples:
       slide_html = _prepare_slide_html(raw_html, sid, orig_idx, base_dir)
@@ -706,7 +646,6 @@ def capture_html_slides(
         f.write(slide_html)
       temp_slide_files.append((sid, temp_file))
 
-    # 4. Start Chrome CDP on an available ephemeral port
     port = _find_free_port()
     profile_dir = os.path.join(tmpdir, "chrome_profile")
     os.makedirs(profile_dir, exist_ok=True)
@@ -732,12 +671,10 @@ def capture_html_slides(
     )
 
     try:
-      captured_images, captured_geometries = _run_async_in_thread(
-          _capture_slides_cdp,
+      extracted_geometries, extracted_image_buffers = _run_async_in_thread(
+          _extract_slides_cdp,
           temp_slide_files,
           port,
-          profile_dir,
-          output_dir,
           scale_factor=scale_factor,
       )
     finally:
@@ -751,21 +688,12 @@ def capture_html_slides(
           pass
       time.sleep(0.2)
 
-  # Read Base64 for each captured image
-  image_data_uris = []
-  for img_p in captured_images:
-    with open(img_p, "rb") as f_img:
-      b64 = base64.b64encode(f_img.read()).decode("utf-8")
-      image_data_uris.append(f"data:image/png;base64,{b64}")
-
   return {
       "success": True,
       "slide_count": total_slides,
       "slide_ids": slide_ids,
-      "image_paths": captured_images,
-      "slide_geometries": captured_geometries,
-      "image_data_uris": image_data_uris,
-      "output_dir": output_dir,
+      "slide_geometries": extracted_geometries,
+      "slide_image_buffers": extracted_image_buffers,
   }
 
 

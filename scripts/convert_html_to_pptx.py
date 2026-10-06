@@ -1,30 +1,34 @@
-import concurrent.futures
+import argparse
+import json
 import logging
 import os
+from pathlib import Path
 import re
-import tempfile
+import sys
 from typing import Any, Dict, List, Optional
 import lxml.html
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches
 
-logger = logging.getLogger(__name__)
+SKILL_ROOT = str(Path(__file__).resolve().parent.parent)
+if SKILL_ROOT not in sys.path:
+    sys.path.insert(0, SKILL_ROOT)
 
-from app.browser_renderer import (
+from scripts.browser_renderer import (
     FALLBACK_FONTS_DIR,
     FONTS_DIR,
-    _capture_slides_cdp,
     _extract_slide_ids,
+    _extract_slides_cdp,
     _find_chrome_binary,
     _find_free_port,
     _get_font_path,
     _prepare_slide_html,
     _run_async_in_thread,
     _tag_slide_ids_in_html,
-    capture_html_slides,
+    extract_html_slides_geometry,
 )
-from app.color_utils import (
+from scripts.color_utils import (
     extract_global_design_tokens,
     extract_root_css_vars,
     hex_to_pptx_color as _hex_to_pptx_color,
@@ -32,10 +36,11 @@ from app.color_utils import (
     parse_color_value,
     resolve_style_color,
 )
-from app.js_geometry_extractor import JS_SLIDE_GEOMETRY_EXTRACTOR
-from app.pptx_native_builders import (
+from scripts.js_geometry_extractor import JS_SLIDE_GEOMETRY_EXTRACTOR
+from scripts.pptx_native_builders import (
     apply_semantic_styles_to_table,
     audit_and_resolve_slide_collisions,
+    build_native_slide_from_code,
     build_slide_from_geometry,
     build_styled_native_chart,
     build_styled_native_table,
@@ -44,17 +49,11 @@ from app.pptx_native_builders import (
     harmonize_deck_presentation_fidelity,
     refine_card_accent_bars,
 )
-from app.schemas import SlideNativeDecomposition, SlideNativeElement, TextRun
-from app.vision_fallback_builder import (
-    build_native_pptx_slide,
-    build_native_slide_from_code,
-    decompose_slide_image_with_vision,
-    generate_native_slide_builder_code,
-)
+
+logger = logging.getLogger(__name__)
 
 
 def parse_slide_semantic_data(slide_elem, css_vars_raw: Dict[str, str]) -> Dict[str, Any]:
-    """Performs deep semantic DOM extraction of slide headers, tables, cell alert colors, badges, and cards."""
     slide_id = slide_elem.get("id", "slide-unknown")
     tag_nodes = slide_elem.xpath(
         './/*[contains(@class, "slide-tag") or contains(@class, "tag") or contains(@class, "badge") or contains(@class, "eyebrow") or contains(@class, "pill")]'
@@ -237,10 +236,9 @@ def convert_html_to_pptx(
     target_slide_id: Optional[str] = None,
     base_dir: Optional[str] = None,
     scale_factor: int = 2,
-    native_mode: bool = True,
     chrome_binary: Optional[str] = None,
+    custom_builder_code: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dynamically converts any multi-slide HTML file or HTML string to a 16:9 widescreen PowerPoint presentation."""
     if os.path.isfile(html_input):
         html_path = os.path.abspath(html_input)
         if not base_dir:
@@ -257,173 +255,133 @@ def convert_html_to_pptx(
         if not output_pptx_path:
             output_pptx_path = os.path.join(base_dir, "slide.pptx")
 
-    with tempfile.TemporaryDirectory() as tmp_captures:
-        cap_res = capture_html_slides(
-            html_input=html_input,
-            output_dir=tmp_captures,
-            target_slide_id=target_slide_id,
-            base_dir=base_dir,
-            scale_factor=scale_factor,
-            chrome_binary=chrome_binary,
-        )
-        all_captured_images = cap_res["image_paths"]
-        all_captured_geometries = cap_res.get("slide_geometries", [])
-        all_slide_ids = cap_res["slide_ids"]
-        total_deck_slides = cap_res["slide_count"]
-
-        css_vars_raw = extract_root_css_vars(raw_html_content)
-        tagged_html_content, _ = _tag_slide_ids_in_html(raw_html_content)
-        try:
-            doc = lxml.html.fromstring(tagged_html_content)
-        except Exception:
-            doc = None
-
-        active_indices = list(range(len(all_slide_ids)))
-        if target_slide_id:
-            target_clean = str(target_slide_id).strip().lower()
-            matched = []
-            for idx, sid in enumerate(all_slide_ids):
-                sid_clean = sid.lower()
-                num_match = re.search(r"\d+", sid_clean)
-                num_str = num_match.group(0) if num_match else ""
-                if (
-                    target_clean == sid_clean
-                    or target_clean == f"slide-{sid_clean}"
-                    or target_clean == num_str
-                    or target_clean == str(idx + 1)
-                ):
-                    matched.append(idx)
-            if matched:
-                active_indices = matched
-
-        captured_images = [all_captured_images[i] for i in active_indices]
-        captured_geometries = [
-            all_captured_geometries[i] if i < len(all_captured_geometries) else None
-            for i in active_indices
-        ]
-        slide_ids = [all_slide_ids[i] for i in active_indices]
-        total_slides = len(captured_images)
-
-        slide_dom_list = []
-        for sid in slide_ids:
-            s_dom = None
-            if doc is not None:
-                nodes = doc.xpath(f"//*[@id='{sid}']")
-                if nodes:
-                    s_dom = parse_slide_semantic_data(nodes[0], css_vars_raw)
-            slide_dom_list.append(s_dom)
-
-        global_tokens = extract_global_design_tokens(
-            first_image_path=captured_images[0] if captured_images else "",
-            raw_html=raw_html_content,
-            first_slide_geometry=captured_geometries[0] if captured_geometries else None,
-        )
-
-        prs = Presentation()
-        prs.slide_width = Inches(13.333333)
-        prs.slide_height = Inches(7.5)
-        blank_layout = prs.slide_layouts[6]
-
-        slide_codes = [None] * len(captured_images)
-        if native_mode and captured_images:
-            max_workers = min(len(captured_images), 2)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(
-                        generate_native_slide_builder_code,
-                        img_path,
-                        slide_dom_data=slide_dom_list[idx],
-                        slide_geometry=captured_geometries[idx],
-                        design_tokens=global_tokens,
-                        slide_index=active_indices[idx] + 1,
-                        total_slides=total_deck_slides,
-                    ): idx
-                    for idx, img_path in enumerate(captured_images)
-                }
-                for future in concurrent.futures.as_completed(futures):
-                    idx = futures[future]
-                    try:
-                        slide_codes[idx] = future.result()
-                    except Exception as e:
-                        logger.warning("[Semantic CodeGen Error for Slide %d]: %s", active_indices[idx] + 1, e)
-                        slide_codes[idx] = None
-
-        for idx, img_path in enumerate(captured_images):
-            slide = prs.slides.add_slide(blank_layout)
-            if not native_mode:
-                slide.shapes.add_picture(
-                    img_path,
-                    Inches(0),
-                    Inches(0),
-                    width=prs.slide_width,
-                    height=prs.slide_height,
-                )
-            else:
-                build_native_slide_from_code(
-                    slide,
-                    prs=prs,
-                    code_str=slide_codes[idx],
-                    fallback_img_path=img_path,
-                    design_tokens=global_tokens,
-                    slide_dom_data=slide_dom_list[idx],
-                    slide_geometry=captured_geometries[idx],
-                )
-
-        if native_mode:
-            harmonize_deck_presentation_fidelity(
-                prs,
-                default_font=global_tokens.get("font_name", "Pretendard"),
-                default_bg_hex=global_tokens.get("bg_color_hex"),
-            )
-
-        os.makedirs(os.path.dirname(os.path.abspath(output_pptx_path)), exist_ok=True)
-        prs.save(output_pptx_path)
-
-        file_size = os.path.getsize(output_pptx_path)
-
-        return {
-            "success": True,
-            "slide_count": total_slides,
-            "slide_ids": slide_ids,
-            "output_pptx_path": output_pptx_path,
-            "file_size_bytes": file_size,
-            "native_mode": native_mode,
-        }
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Dynamically convert an HTML slide deck to PPTX with Native Editable Vision Decomposition."
+    ext_res = extract_html_slides_geometry(
+        html_input=html_input,
+        target_slide_id=target_slide_id,
+        base_dir=base_dir,
+        scale_factor=scale_factor,
+        chrome_binary=chrome_binary,
     )
-    parser.add_argument("input_html", help="Path to the input HTML presentation file")
-    parser.add_argument("-o", "--output", help="Path to output PPTX file (optional)")
+    slide_geometries = ext_res.get("slide_geometries", [])
+    slide_image_buffers = ext_res.get("slide_image_buffers", [])
+    slide_ids = ext_res["slide_ids"]
+    total_slides = len(slide_ids)
+
+    css_vars_raw = extract_root_css_vars(raw_html_content)
+    tagged_html_content, _ = _tag_slide_ids_in_html(raw_html_content)
+    try:
+        doc = lxml.html.fromstring(tagged_html_content)
+    except Exception:
+        doc = None
+
+    slide_dom_list = []
+    for sid in slide_ids:
+        s_dom = None
+        if doc is not None:
+            nodes = doc.xpath(f"//*[@id='{sid}']")
+            if nodes:
+                s_dom = parse_slide_semantic_data(nodes[0], css_vars_raw)
+        slide_dom_list.append(s_dom)
+
+    global_tokens = extract_global_design_tokens(
+        raw_html=raw_html_content,
+        first_slide_geometry=slide_geometries[0] if slide_geometries else None,
+    )
+
+    prs = Presentation()
+    prs.slide_width = Inches(13.333333)
+    prs.slide_height = Inches(7.5)
+    blank_layout = prs.slide_layouts[6]
+
+    for idx in range(total_slides):
+        slide = prs.slides.add_slide(blank_layout)
+        build_native_slide_from_code(
+            slide,
+            prs=prs,
+            code_str=custom_builder_code,
+            screenshot_source=slide_image_buffers[idx] if idx < len(slide_image_buffers) else None,
+            design_tokens=global_tokens,
+            slide_dom_data=slide_dom_list[idx],
+            slide_geometry=slide_geometries[idx] if idx < len(slide_geometries) else None,
+        )
+
+    harmonize_deck_presentation_fidelity(
+        prs,
+        default_font=global_tokens.get("font_name", "Pretendard"),
+        default_bg_hex=global_tokens.get("bg_color_hex"),
+    )
+
+    output_pptx_path = os.path.abspath(output_pptx_path)
+    os.makedirs(os.path.dirname(output_pptx_path), exist_ok=True)
+    prs.save(output_pptx_path)
+
+    file_size = os.path.getsize(output_pptx_path)
+
+    return {
+        "status": "success",
+        "success": True,
+        "slide_count": total_slides,
+        "slide_ids": slide_ids,
+        "output_pptx_path": output_pptx_path,
+        "file_size_bytes": file_size,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Convert single- or multi-slide HTML presentations into 100%% native editable 16:9 PowerPoint (.pptx) decks."
+    )
+    parser.add_argument(
+        "input_html",
+        help="Path to the input .html presentation file (or raw HTML markup string).",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Output .pptx file path (defaults to <input_stem>.pptx in the same directory).",
+    )
+    parser.add_argument(
+        "-s",
+        "--slide",
+        dest="target_slide_id",
+        help="Optional 1-based slide index or HTML id (e.g. '1' or 'slide-3') to convert only a single slide.",
+    )
     parser.add_argument(
         "--scale",
         type=int,
         default=2,
-        help="Device scale factor (default: 2 for Retina)",
+        help="Device scale factor for Chromium rendering (default: 2 for Retina).",
     )
     parser.add_argument(
-        "--native",
+        "--builder-script",
+        help="Optional path to a custom Python script defining `build_slide(slide, prs)` generated by the Host AI.",
+    )
+    parser.add_argument(
+        "--json",
         action="store_true",
-        default=True,
-        help="Use native editable shapes (default: True)",
-    )
-    parser.add_argument(
-        "--no-native",
-        dest="native",
-        action="store_false",
-        help="Embed high-DPI slide screenshots instead of native shapes",
+        help="Emit structured JSON output to stdout.",
     )
 
     args = parser.parse_args()
+    custom_code = None
+    if args.builder_script and os.path.isfile(args.builder_script):
+        with open(args.builder_script, "r", encoding="utf-8") as f_code:
+            custom_code = f_code.read()
+
     result = convert_html_to_pptx(
-        args.input_html,
+        html_input=args.input_html,
         output_pptx_path=args.output,
+        target_slide_id=args.target_slide_id,
         scale_factor=args.scale,
-        native_mode=args.native,
+        custom_builder_code=custom_code,
     )
-    print(f"[SUCCESS] Converted {result['slide_count']} slides to PPTX:")
-    print(f"File: {result['output_pptx_path']} ({result['file_size_bytes']:,} bytes)")
+
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"[SUCCESS] Converted {result['slide_count']} slide(s) to PPTX:")
+        print(f"File: {result['output_pptx_path']} ({result['file_size_bytes']:,} bytes)")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,4 +1,6 @@
-JS_SLIDE_GEOMETRY_EXTRACTOR = """
+from typing import Final
+
+JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
 (() => {
     const targetId = '%SLIDE_ID%';
     const slideIdx0 = %SLIDE_IDX_0%;
@@ -99,7 +101,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         };
     };
 
-    // Resolve authoritative slide canvas background by blending semi-transparent ancestors up to body
     const parseRgba = (str) => {
         if (!str || str === 'transparent' || str === 'none') return null;
         const m = str.match(/rgba?\\(\\s*(\\d+)[,\\s]+(\\d+)[,\\s]+(\\d+)(?:[,\\s/]+([\\d.]+))?\\s*\\)/);
@@ -140,7 +141,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
     }
     const slideBg = `rgb(${bgRgb.r}, ${bgRgb.g}, ${bgRgb.b})`;
 
-    // Universal Heading & Title Discovery
     const headings = Array.from(s.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(el => {
         if (el.closest('header') || el.closest('footer') || el.closest('.foot')) return false;
         const cs = window.getComputedStyle(el);
@@ -160,7 +160,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         if (prominent.length > 0) mainH = prominent[0];
     }
 
-    // Subtitle / Premise Discovery (strictly exclude mainH, containers, and bottom footnotes)
     let subDesc = Array.from(s.querySelectorAll('p.subtitle, p.premise, p.lead, p.cover-subtitle, h2.subtitle, [class*="subtitle"], [class*="premise"], p.text-slate-400')).find(el => {
         if (!mainH) return true;
         if (el === mainH || mainH.contains(el) || el.contains(mainH)) return false;
@@ -181,7 +180,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         }
     }
 
-    // Extract ALL Header Badges / Pills / Eyebrows (including top header pills and eyebrows above mainH)
     const headerBadges = [];
     const headerBadgeEls = [];
     const seenBadges = new Set();
@@ -207,7 +205,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
 
     s.querySelectorAll('.kicker, [class*="kicker"], .slide-head .eyebrow, .slide-head .badge-pill, .slide-head [class*="tag"], .slide-head [class*="badge"], .slide-head [class*="pill"], .slide-tag, [class*="eyebrow"]').forEach(addHeaderBadge);
 
-    // Also discover top-of-slide eyebrows and header pills in non-.slide-head layouts (e.g. Tailwind decks)
     s.querySelectorAll('div, span').forEach(el => {
         if (el.children.length > 2) return;
         if (el.querySelector('h1, h2, h3, p, div')) return;
@@ -226,7 +223,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
 
     const num = s.querySelector('.slide-number, [class*="slide-counter"], [class*="foot__n"]');
 
-    // Extract SVG and IMG visual elements (excluding tiny inline icons)
     const images = [];
     s.querySelectorAll('svg, img').forEach(el => {
         if (el.parentElement && el.parentElement.closest('svg')) return;
@@ -240,7 +236,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         });
     });
 
-    // Extract Chart.js Canvases
     const charts = [];
     s.querySelectorAll('canvas').forEach(cv => {
         const r = cv.getBoundingClientRect();
@@ -292,7 +287,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         });
     });
 
-    // Highlight / Callout boxes discovered BEFORE cards so banners/callouts are never duplicated as cards
     const hlBoxes = [];
     const hlBoxEls = [];
     const seenHl = new Set();
@@ -340,7 +334,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         return cls.split(/\\s+/).some(t => cardClassTokens.has(t));
     };
 
-    // Universal Container Discovery: Panels, Columns, Cards, Pillars, Bridges, Timeline Nodes
     const isTopContainer = (el) => {
         if (el === s || el.contains(s) || el.querySelector('table') || el.closest('table')) return false;
         if (el.closest('.slide-head') || el.closest('header') || el.closest('.foot') || el.closest('footer')) return false;
@@ -367,10 +360,8 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         const hasShadow = cs.boxShadow && cs.boxShadow !== 'none';
         const hasCardClass = hasExplicitCardClass(el);
 
-        // Exclude bottom footer divider bars (only 1px border-t, no bg, near bottom of slide)
         if (!hasBg && !hasRadius && !hasCardClass && rIn.top > 6.2 && rIn.height < 0.65) return false;
 
-        // Exclude pure layout wrappers (e.g. grid / flex-col columns) that have no visual box of their own
         if (!hasBg && !hasRadius && !hasBorder && !hasShadow && !hasCardClass) return false;
 
         return true;
@@ -388,7 +379,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         const hasCanvas = !!c.querySelector('canvas');
         const hasSvgOrImg = !!c.querySelector('svg, img');
 
-        // Check Bridge connector
         const bridgeBadgeEl = c.querySelector('.bridge-badge') || (c.classList.contains('bridge-badge') ? c : null);
         const isBridge = (c.className && c.className.includes('bridge')) || !!bridgeBadgeEl;
         let bridgeData = null;
@@ -403,7 +393,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             };
         }
 
-        // Check Attach Card specialized structure
         const isAttachCard = (c.className && c.className.includes('attach-card')) || !!c.querySelector('.attach-card__mech');
         let attachData = null;
         if (isAttachCard) {
@@ -419,7 +408,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             };
         }
 
-        // Sub-cards (both explicit classes and inner styled boxes with background + border-radius)
         const rawSubCardCandidates = Array.from(c.querySelectorAll('div')).filter(sc => {
             if (sc === c || sc.querySelector('canvas, table, svg')) return false;
             const scCls = typeof sc.className === 'string' ? sc.className : '';
@@ -469,7 +457,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             };
         });
 
-        // Heading & Tag discovery within the card
         let cHeading = c.querySelector('h2, h3, h4, h5, .panel__title, .card-title, .pillar-title, .runtime__name, [class*="title"]');
         if (cHeading && subCardEls.some(sc => sc.contains(cHeading))) {
             cHeading = null;
@@ -479,7 +466,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             tagEl = null;
         }
 
-        // Check for eyebrow / category label right above cHeading (e.g. "MARKET DISRUPTION", "PILLAR 01", "[R&D 본부]")
         if (!tagEl && cHeading) {
             const hTop = cHeading.getBoundingClientRect().top;
             const eyebrowCandidates = Array.from(c.querySelectorAll('div, span')).filter(el => {
@@ -497,7 +483,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             }
         }
 
-        // If no semantic heading tag (h2-h5), find first prominent bold heading inside card (outside subCards), including <b> and <strong>
         if (!cHeading) {
             const boldCandidates = Array.from(c.querySelectorAll('div, span, b, strong')).filter(el => {
                 if (el === tagEl || (tagEl && (tagEl.contains(el) || el.contains(tagEl)))) return false;
@@ -532,7 +517,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             styles: getStyles(cDescEl)
         } : null;
 
-        // Pipeline steps
         const pipeStepEls = Array.from(c.querySelectorAll('.ma-pipe-step, [class*="pipe-step"], [class*="step-item"]'));
         const pipeSteps = pipeStepEls.map(stEl => {
             const h = stEl.querySelector('h3, h4, h5, [class*="title"], strong');
@@ -546,7 +530,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             };
         });
 
-        // Flow sequences
         const flowEls = Array.from(c.querySelectorAll('.flow, [class*="flow"]'));
         const flows = flowEls.map(fl => {
             const nodes = Array.from(fl.querySelectorAll('.flow__node, [class*="node"]')).map(n => ({
@@ -562,7 +545,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             };
         }).filter(f => f.nodes.length > 0);
 
-        // Feature items (.f-item)
         const fItemEls = Array.from(c.querySelectorAll('.f-item, [class*="f-item"]')).filter(fi => fi !== c);
         const fItems = fItemEls.map(fi => {
             const ic = fi.querySelector('.f-item__icon, [class*="icon"]');
@@ -579,7 +561,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             };
         });
 
-        // Code blocks & spec blocks (only block-level or standalone code blocks, not inline <code> inside paragraphs/list items)
         const codeBlocks = [];
         c.querySelectorAll('pre, .file, .code-block, [class*="code"]').forEach(cb => {
             if (cb.closest('li, p')) return;
@@ -607,7 +588,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
             styles: getStyles(b)
         }));
 
-        // Collect all remaining paragraphs & list items in natural DOM order
         const paras = [];
         const seenTexts = new Set();
         if (cardTitle) seenTexts.add(cardTitle);
@@ -646,7 +626,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
                 });
             });
 
-            // Fallback for leaf containers (e.g. <span class="tag">Text</span> or <div><b>Heading</b>Direct text</div>)
             if (paras.length === 0 && subCards.length === 0 && codeBlocks.length === 0) {
                 let directTxt = c.innerText ? c.innerText.trim() : '';
                 if (cardTitle && directTxt.startsWith(cardTitle)) {
@@ -697,7 +676,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         });
     });
 
-    // Tables
     const tables = [];
     s.querySelectorAll('table').forEach(tbl => {
         const parentCard = tbl.closest('.info-card, .card, .panel, [class*="rounded"]');
@@ -750,7 +728,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         });
     });
 
-    // Footnotes / Bottom notes (strictly leaf elements, including bottom footer bar items)
     const footnotes = [];
     const footnoteEls = [];
     const seenFn = new Set();
@@ -789,7 +766,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR = """
         });
     }
 
-    // Standalone Descriptions & Uncaptured Leaf Texts (e.g. cover meta, standalone arrows, labels)
     const desc = [];
     const seenDesc = new Set();
     s.querySelectorAll('p.cover-desc, p.intro-desc, div.meta, div.arrow, span.x').forEach(el => {

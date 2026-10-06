@@ -1,90 +1,67 @@
-# HTML → PPTX 변환기 (`html-to-pptx`)
+# HTML → PPTX 변환 스킬 (`html-to-pptx`)
 
-HTML 슬라이드를 **편집 가능한 16:9 PowerPoint(.pptx)** 로 변환하는 **Antigravity Skill (및 MCP 서버)** 입니다.
-텍스트, 카드, 표, Chart.js 차트, SVG 다이어그램이 통짜 이미지가 아닌 편집 가능한 PowerPoint 도형·표·차트로 변환됩니다.
+HTML 슬라이드와 슬라이드 이미지를 **편집 가능한 16:9 PowerPoint(`.pptx`)** 로 변환하는 **[Agent Skills](https://agentskills.io) 표준 기반 로컬 스킬**입니다.
 
-## 설치 방식 선택
+- **100% 네이티브 객체 변환**: 텍스트, 카드, 배지, 표(`<table>`), Chart.js 차트(`<canvas>`), SVG 다이어그램이 통짜 이미지가 아닌 편집 가능한 PowerPoint 도형·표·차트로 변환됩니다.
+- **제로 인프라 & 제로 GCP 설정**: Cloud Run 배포, MCP 서버 데몬, GCP Project ID(`gcloud auth`) 설정 없이 로컬에서 즉시 동작합니다.
+- **호스트 에이전트 AI 활용**: 이미지(스크린샷)를 슬라이드로 변환하거나 시각적 품질을 검수할 때는 스킬이 등록된 **호스트 에이전트(Antigravity / Gemini 등) 자신의 멀티모달 AI**를 활용하고, 실제 `.pptx` 생성은 로컬 `scripts/` 엔진이 결정론적으로 수행합니다.
 
-| | **A. Cloud Run (팀 공유)** | **B. 로컬 실행** |
-|---|---|---|
-| 팀원 PC에 필요한 것 | 없음 (공유받은 명령어 한 줄만 실행) | Python 3.11+, Chrome, gcloud 로그인 |
-| 상대 경로 이미지·CSS (`./img/a.png`) | ❌ 반영 안 됨 (외부 URL 또는 인라인 SVG/base64 권장) | ✅ 반영됨 |
-| 팀원과 공유 | ✅ URL 하나로 팀 전체 공유 | ❌ 각자 환경 구성 필요 |
-| 비용 청구 | 배포한 프로젝트 (Cloud Run + Gemini) | 각자 프로젝트 (Gemini) |
+---
 
-## 사전 준비
+## 디렉토리 구조 (`enterprise_skills` 표준)
+
+```text
+html-to-pptx/
+├── SKILL.md                                  # YAML 프론트매터 + 에이전트 워크플로우 지침
+├── scripts/                                  # 로컬 실행 스크립트 및 변환 모듈
+│   ├── convert_html_to_pptx.py               # CLI: HTML -> 16:9 네이티브 PPTX 변환
+│   ├── browser_renderer.py                   # 헤드리스 Chrome CDP 라이브 DOM 기하 추출 엔진
+│   ├── js_geometry_extractor.py              # 브라우저 라이브 DOM 기하·스타일 추출기
+│   ├── pptx_native_builders.py               # python-pptx 도형·표·차트 빌더 및 충돌 해결기
+│   └── color_utils.py                        # CSS 변수 및 RGBA 알파 블렌딩 파서
+├── references/                               # 상세 레퍼런스 문서 (Progressive Disclosure)
+│   ├── html_slide_authoring_guide.md         # 이미지->HTML 변환 및 슬라이드 작성용 16:9 시맨틱 가이드
+│   └── cli_and_architecture.md               # CLI 플래그, JSON 출력 명세, 커스텀 빌더 훅 설명
+└── assets/                                   # 정적 리소스
+    ├── fonts/                                # 폴백 폰트 (NotoSansKR 등)
+    ├── chart.min.js                          # 오프라인 Chart.js 번들
+    └── tailwindcss.min.js                    # 오프라인 Tailwind CSS 번들
+```
+
+---
+
+## 설치 방법 (로컬 단독 설치)
+
+Python 3.11+ 및 Chrome(또는 Chromium)만 설치되어 있으면 됩니다. 별도의 GCP 로그인이나 프로젝트 설정이 필요하지 않습니다.
 
 ```bash
 git clone https://github.com/hwangju1116/html_to_slide.git
 cd html_to_slide
+./install_antigravity.sh
 ```
 
-Cloud Run 배포자(관리자)와 로컬 실행 사용자는 결제가 연결된 GCP 프로젝트와 [gcloud](https://cloud.google.com/sdk/docs/install) 로그인이 필요합니다 (Cloud Run 배포 시 [Terraform](https://developer.hashicorp.com/terraform/install) 추가 필요). 이미 배포된 Cloud Run URL을 받아 쓰는 팀원은 아래 로그인 과정을 건너뛰어도 됩니다.
-
-```bash
-gcloud auth login
-gcloud auth application-default login
-```
-
----
-
-## A. Cloud Run으로 팀 공유하기
-
-### 1. 서버 배포 (관리자 1명)
-
-```bash
-terraform -chdir=terraform init
-terraform -chdir=terraform apply -var="project_id=YOUR_PROJECT_ID"
-```
-
-첫 배포는 10~15분 정도 걸립니다. 배포한 관리자 PC에는 Antigravity Skill과 MCP 서버 등록이 자동으로 완료됩니다. 완료 후 출력되는 `team_install_command`를 팀원에게 공유하세요. (나중에 다시 보려면 `terraform -chdir=terraform output` 실행)
-
-### 2. Antigravity Skill 등록 (팀원 각자)
-
-저장소를 클론한 폴더에서 관리자에게 공유받은 명령어를 실행합니다.
-
-```bash
-./install_antigravity.sh --remote-url https://<서비스 URL>/mcp
-```
-
-Antigravity Skill과 원격 MCP 서버가 자동으로 연결됩니다. 등록 후 Antigravity에서 `Reload Window`를 실행하세요.
-
----
-
-## B. 로컬에서 사용하기
-
-```bash
-./install_antigravity.sh --project YOUR_PROJECT_ID
-```
-
-가상환경 생성, 패키지·폰트 설치, Antigravity Skill 및 MCP 서버 등록을 자동으로 처리합니다. 완료 후 Antigravity에서 `Reload Window`를 실행하세요.
+- 가상환경(`.venv`) 생성 및 패키지(`python-pptx`, `lxml`, `websockets`, `pillow`) 설치
+- Pretendard 폰트 로컬 캐시
+- `~/.gemini/config/skills/html-to-pptx` 심볼릭 링크 자동 등록
 
 ---
 
 ## 사용 방법
 
-설치가 완료되면 Antigravity 채팅창에서 자연어로 요청하기만 하면 됩니다. (`html-to-pptx` 스킬이 로컬/Cloud Run 환경에 맞춰 변환부터 `.pptx` 파일 저장까지 자동으로 처리합니다.)
-
-- **같은 대화에서 만든 슬라이드를 바로 변환할 때**
+### 1. 에이전트 채팅창에서 자연어로 요청
+- **HTML 슬라이드를 PPTX로 변환할 때**
   > "위에서 만든 HTML 슬라이드를 PPTX로 변환해줘"
-- **채팅창에 HTML 파일을 첨부하거나 열어둔 상태에서 변환할 때**
-  > "첨부한 파일을 PPTX로 변환해줘"
-- **특정 파일 경로를 지정하거나 일부 슬라이드만 변환할 때**
   > "`~/slides/deck.html`을 PPTX로 변환해줘"
   > "3번 슬라이드만 PPTX로 다시 변환해줘"
+- **슬라이드 이미지(`.png` / `.jpg`)를 편집 가능한 PPTX로 변환할 때**
+  > "첨부한 슬라이드 이미지를 편집 가능한 PPTX로 만들어줘" *(호스트 AI가 이미지를 분석해 16:9 시맨틱 HTML을 생성한 뒤 네이티브 PPTX로 변환)*
 
----
-
-## 업데이트 및 삭제
+### 2. CLI로 직접 실행
 
 ```bash
-git pull origin main
-terraform -chdir=terraform apply -var="project_id=YOUR_PROJECT_ID"     # 재배포
-terraform -chdir=terraform destroy -var="project_id=YOUR_PROJECT_ID"   # 삭제
+# 전체 슬라이드를 네이티브 PPTX로 변환
+./.venv/bin/python scripts/convert_html_to_pptx.py deck.html -o deck.pptx
+
+# 특정 슬라이드(예: 2번 슬라이드)만 변환 + JSON 결과 출력
+./.venv/bin/python scripts/convert_html_to_pptx.py deck.html -s 2 -o slide2.pptx --json
 ```
-
----
-
-## 주의사항
-
-- 기본 설정(`allow_unauthenticated=true`)에서는 URL을 아는 누구나 호출할 수 있고, 비용은 배포한 프로젝트에 청구됩니다. URL은 팀 내부에만 공유하고, 사용하지 않을 때는 삭제하세요.

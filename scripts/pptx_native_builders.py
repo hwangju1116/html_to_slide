@@ -1,15 +1,22 @@
 import base64
+import inspect
 import io
 import logging
 import re
-from typing import Any, Dict, List, Optional
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.util import Inches, Pt
 
-from app.color_utils import (
+SKILL_ROOT = str(Path(__file__).resolve().parent.parent)
+if SKILL_ROOT not in sys.path:
+  sys.path.insert(0, SKILL_ROOT)
+
+from scripts.color_utils import (
     hex_to_pptx_color as _hex_to_pptx_color,
     hex_to_rgb_tuple as _hex_to_rgb_tuple,
     parse_color_value,
@@ -28,7 +35,6 @@ def build_styled_native_table(
     font_name: str = "Pretendard",
     col_ratios: Optional[List[float]] = None,
 ):
-  """Builds a pixel-faithful native PowerPoint table with theme-adaptive styling, exact row colors, and contrast preservation."""
   is_dark = table_data.get("is_dark", False)
   slide_bg = table_data.get("slide_bg_rgb", (15, 23, 42) if is_dark else (255, 255, 255))
   blend_rgb = (slide_bg[0], slide_bg[1], slide_bg[2])
@@ -36,7 +42,6 @@ def build_styled_native_table(
   if card_border_rgb is None:
     card_border_rgb = RGBColor(51, 65, 85) if is_dark else RGBColor(233, 219, 237)
 
-  # Guarantee table does not overflow slide boundaries
   if left < Inches(0.4):
     left = Inches(0.4)
   max_avail_w = Inches(13.333) - left - Inches(0.4)
@@ -136,7 +141,6 @@ def build_styled_native_table(
       cell.margin_bottom = Inches(0.08)
       cell.fill.solid()
 
-      # Dynamic cell background resolution
       cell_bg = cell_data.get("bgColor")
       if cell_bg:
         row_bg_rgb = parse_color_value(cell_bg, default=RGBColor(30, 41, 59) if is_dark else RGBColor(255, 255, 255), bg_blend_rgb=blend_rgb)
@@ -152,7 +156,6 @@ def build_styled_native_table(
       p.font.name = font_name
       p.font.size = Pt(11.5)
 
-      # Color and contrast safety
       default_cell_fg = RGBColor(241, 245, 249) if is_dark else RGBColor(17, 17, 21)
       if "color" in cell_data:
         col_rgb = parse_color_value(cell_data["color"], default=default_cell_fg)
@@ -161,7 +164,6 @@ def build_styled_native_table(
       else:
         col_rgb = default_cell_fg
 
-      # Contrast check against row_bg_rgb
       bg_lum = (row_bg_rgb[0] * 0.299 + row_bg_rgb[1] * 0.587 + row_bg_rgb[2] * 0.114)
       fg_lum = (col_rgb[0] * 0.299 + col_rgb[1] * 0.587 + col_rgb[2] * 0.114)
       if bg_lum < 120 and fg_lum < 90:
@@ -212,7 +214,6 @@ def build_styled_native_chart(
     is_dark: bool = False,
     slide_bg_rgb: tuple[int, int, int] = (15, 23, 42),
 ):
-  """Builds a 100% native editable PowerPoint chart from Chart.js configuration (or falls back to high-res canvas PNG)."""
   import io
   from pptx.chart.data import CategoryChartData
   from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
@@ -274,7 +275,6 @@ def build_styled_native_chart(
         chart_shape = slide.shapes.add_chart(xl_type, left, top, width, height, chart_data_obj)
         chart = chart_shape.chart
 
-        # Make chartSpace and plotArea backgrounds 100% transparent so dark/glass cards show through
         try:
           cs = chart._element
           for existing_spPr in cs.xpath("./c:spPr"):
@@ -296,7 +296,6 @@ def build_styled_native_chart(
         except Exception:
           pass
 
-        # Set Doughnut hole size (65% matching Chart.js cutout)
         if xl_type == XL_CHART_TYPE.DOUGHNUT:
           try:
             hole_pct = 65
@@ -314,7 +313,6 @@ def build_styled_native_chart(
           except Exception:
             pass
 
-        # Configure Legend
         plugins_cfg = options.get("plugins") if isinstance(options.get("plugins"), dict) else {}
         legend_cfg = plugins_cfg.get("legend") if isinstance(plugins_cfg.get("legend"), dict) else {}
         default_show_legend = len(raw_datasets) > 1 or xl_type in (XL_CHART_TYPE.DOUGHNUT, XL_CHART_TYPE.PIE)
@@ -340,7 +338,6 @@ def build_styled_native_chart(
         else:
           chart.has_legend = False
 
-        # Configure Axes for Cartesian charts
         if xl_type not in (XL_CHART_TYPE.DOUGHNUT, XL_CHART_TYPE.PIE, XL_CHART_TYPE.RADAR):
           axis_fg = RGBColor(148, 163, 184) if is_dark else RGBColor(100, 116, 139)
           grid_hex = "1E293B" if is_dark else "E2E8F0"
@@ -387,7 +384,6 @@ def build_styled_native_chart(
           except Exception:
             pass
 
-        # Style Series & Points
         default_palette = [
             RGBColor(225, 29, 72),
             RGBColor(59, 130, 246),
@@ -455,7 +451,6 @@ def build_styled_native_chart(
     except Exception as chart_err:
       logger.warning("[Native Chart Builder Warning]: %s", chart_err)
 
-  # Fallback: embed high-res transparent PNG of the rendered Chart.js canvas
   data_url = chart_data.get("dataUrl")
   if data_url and isinstance(data_url, str) and "base64," in data_url:
     try:
@@ -474,11 +469,9 @@ def apply_semantic_styles_to_table(
     is_dark: bool = False,
     slide_bg_rgb: tuple[int, int, int] = (15, 23, 42),
 ) -> None:
-  """Guarantees 100% pixel-faithful styling on any native table with theme-adaptive colors and contrast preservation."""
   tbl = table_shape.table
   blend_rgb = (slide_bg_rgb[0], slide_bg_rgb[1], slide_bg_rgb[2])
 
-  # 1. Header styling
   if table_data.get("headers") and len(tbl.rows) > 0:
     for c_idx, h in enumerate(table_data["headers"]):
       if c_idx >= len(tbl.rows[0].cells):
@@ -505,7 +498,6 @@ def apply_semantic_styles_to_table(
           r.font.bold = True
           r.font.color.rgb = h_fg_rgb
 
-  # 2. Content rows styling: Theme-adaptive fills, high-contrast readable text
   for r_idx, row_data in enumerate(table_data.get("rows", [])):
     row_num = r_idx + (1 if table_data.get("headers") else 0)
     if row_num >= len(tbl.rows):
@@ -525,7 +517,6 @@ def apply_semantic_styles_to_table(
         row_bg_rgb = RGBColor(255, 255, 255) if r_idx % 2 == 0 else RGBColor(248, 250, 252)
       cell.fill.fore_color.rgb = row_bg_rgb
 
-      # Contrast safety
       default_cell_fg = RGBColor(241, 245, 249) if is_dark else RGBColor(17, 17, 21)
       if "color" in cell_data:
         col_rgb = parse_color_value(cell_data["color"], default=default_cell_fg)
@@ -569,7 +560,6 @@ def ensure_slide_canvas_background(
     bg_color: Optional[RGBColor] = None,
     is_dark: bool = False,
 ) -> None:
-  """Ensures the slide has a guaranteed full-bleed 16:9 canvas background rectangle covering (0, 0, 13.333, 7.5), and removes any duplicate backgrounds."""
   if bg_color is None:
     bg_color = RGBColor(15, 23, 42) if is_dark else RGBColor(255, 255, 255)
 
@@ -606,20 +596,23 @@ def ensure_slide_canvas_background(
 def embed_extracted_slide_images(
     slide,
     geom: Optional[Dict[str, Any]],
-    screenshot_path: Optional[str],
+    screenshot_source: Optional[Union[bytes, str]],
 ) -> None:
-  """Crops and embeds <svg> and <img> visual regions from the high-DPI slide screenshot onto the slide."""
-  if not geom or not screenshot_path or not geom.get("images"):
+  if not geom or not screenshot_source or not geom.get("images"):
     return
 
   try:
     from PIL import Image
     import os
 
-    if not os.path.exists(screenshot_path):
+    if isinstance(screenshot_source, bytes):
+      img_stream = io.BytesIO(screenshot_source)
+    elif isinstance(screenshot_source, str) and os.path.exists(screenshot_source):
+      img_stream = screenshot_source
+    else:
       return
 
-    with Image.open(screenshot_path) as full_img:
+    with Image.open(img_stream) as full_img:
       img_w, img_h = full_img.size
       for img_info in geom.get("images", []):
         r = img_info.get("rect", {})
@@ -630,10 +623,9 @@ def embed_extracted_slide_images(
         if width_in < 0.25 or height_in < 0.25:
           continue
 
-        # Skip if a picture already exists near this position
         already_embedded = False
         for s in slide.shapes:
-          if getattr(s, "shape_type", None) == 13:  # PICTURE
+          if getattr(s, "shape_type", None) == 13:
             s_l = s.left.inches if hasattr(s.left, "inches") else s.left / 914400.0
             s_t = s.top.inches if hasattr(s.top, "inches") else s.top / 914400.0
             if abs(s_l - left_in) < 0.35 and abs(s_t - top_in) < 0.35:
@@ -669,22 +661,19 @@ def build_slide_from_geometry(
     geom: Dict[str, Any],
     font_name: str = "Pretendard",
     brand_color_rgb: Optional[RGBColor] = None,
-    screenshot_path: Optional[str] = None,
+    screenshot_source: Optional[Union[bytes, str]] = None,
 ) -> None:
-  """Deterministically constructs a pixel-faithful native PowerPoint slide from browser-measured DOM layout geometry."""
   if not geom:
     return
 
   if brand_color_rgb is None:
     brand_color_rgb = RGBColor(37, 99, 235)
 
-  # 1. Canvas Background
   bg_color = parse_color_value(geom.get("slideBgColor"), RGBColor(255, 255, 255))
   is_dark = (bg_color[0] * 0.299 + bg_color[1] * 0.587 + bg_color[2] * 0.114) < 128
   ensure_slide_canvas_background(slide, prs=None, bg_color=bg_color, is_dark=is_dark)
   blend_rgb = (bg_color[0], bg_color[1], bg_color[2])
 
-  # 2. Header Badges (both eyebrow and badge-pill)
   for b_data in geom.get("headerBadges", []):
     r = b_data["rect"]
     b_txt = b_data["text"]
@@ -725,7 +714,6 @@ def build_slide_from_geometry(
     p.font.color.rgb = fg_rgb
     p.alignment = PP_ALIGN.CENTER if has_bg else PP_ALIGN.LEFT
 
-  # 3. Slide Number
   if geom.get("num") and geom["num"]["text"]:
     n_data = geom["num"]
     r = n_data["rect"]
@@ -742,7 +730,6 @@ def build_slide_from_geometry(
     p.font.bold = True
     p.font.color.rgb = parse_color_value(n_data["styles"].get("color") if n_data.get("styles") else None, RGBColor(148, 163, 184) if is_dark else RGBColor(100, 116, 139))
 
-  # 4. Master Title
   if geom.get("title") and geom["title"]["text"]:
     t_data = geom["title"]
     r = t_data["rect"]
@@ -764,7 +751,6 @@ def build_slide_from_geometry(
     if is_center:
       p.alignment = PP_ALIGN.CENTER
 
-  # 5. Master Subtitle
   if geom.get("sub") and geom["sub"]["text"]:
     s_data = geom["sub"]
     r = s_data["rect"]
@@ -782,7 +768,6 @@ def build_slide_from_geometry(
     p.font.size = Pt(st.get("fontSizePt", 13.0))
     p.font.color.rgb = parse_color_value(st.get("color"), RGBColor(148, 163, 184) if is_dark else RGBColor(100, 116, 139))
 
-  # 6. Description / Intro Paragraphs (Cover & Non-card slides)
   for d in geom.get("desc", []):
     r = d["rect"]
     st = d["styles"]
@@ -795,7 +780,6 @@ def build_slide_from_geometry(
     p.font.size = Pt(st.get("fontSizePt", 12.0))
     p.font.color.rgb = parse_color_value(st.get("color"), RGBColor(203, 213, 225) if is_dark else RGBColor(74, 77, 82))
 
-  # 7. Native Cards & Layout Containers
   for card in geom.get("cards", []):
     r = card["rect"]
     c_left = Inches(r["left"])
@@ -803,7 +787,6 @@ def build_slide_from_geometry(
     c_w = Inches(r["width"])
     c_h = Inches(r["height"])
 
-    # Handle Bridge Connector
     if card.get("isBridge") and card.get("bridge"):
       b_info = card["bridge"]
       br = b_info["rect"]
@@ -831,7 +814,6 @@ def build_slide_from_geometry(
       p1.alignment = PP_ALIGN.CENTER
       continue
 
-    # Normal Container / Card
     raw_c_bg = (card.get("styles", {}).get("backgroundColor") or "").strip()
     raw_c_border = (card.get("styles", {}).get("borderColor") or "").strip()
     has_c_bg = bool(raw_c_bg and raw_c_bg not in ("transparent", "rgba(0, 0, 0, 0)", "none"))
@@ -852,7 +834,6 @@ def build_slide_from_geometry(
     else:
       c_shape.line.fill.background()
 
-    # Handle Attach Card
     if card.get("isAttachCard") and card.get("attachData"):
       ad = card["attachData"]
       tf = c_shape.text_frame
@@ -882,7 +863,6 @@ def build_slide_from_geometry(
         p2.font.color.rgb = RGBColor(74, 85, 104)
       continue
 
-    # Top or Left Accent Capsule Pill
     curr_top = c_top
     if card.get("hasTopAccent"):
       bar_color = parse_color_value(card.get("topAccentColor"), brand_color_rgb)
@@ -917,10 +897,8 @@ def build_slide_from_geometry(
       l_bar.fill.fore_color.rgb = l_bar_color
       l_bar.line.fill.background()
 
-    # Pipeline Steps container: do NOT draw outer card title
     has_pipeline = len(card.get("pipelineSteps", [])) > 0
 
-    # Card Tag / Eyebrow
     if card.get("tag") and card["tag"]["text"]:
       tg = card["tag"]
       tg_r = tg["rect"]
@@ -953,7 +931,6 @@ def build_slide_from_geometry(
       p.font.color.rgb = tg_fg
       curr_top += Inches(max(0.22, tg_r["height"])) + Inches(0.04)
 
-    # Badges
     for b in card.get("badges", []):
       br = b.get("rect", {})
       b_txt = b.get("text", "")
@@ -990,7 +967,6 @@ def build_slide_from_geometry(
         p.font.color.rgb = parse_color_value(b.get("styles", {}).get("color"), RGBColor(78, 86, 95))
         p.alignment = PP_ALIGN.CENTER
 
-    # Card Title (only if NOT pipeline banner)
     if card.get("title") and card["title"] != "➔" and not has_pipeline:
       b_first_left = min((b["rect"]["left"] for b in card.get("badges", []) if b.get("rect")), default=None)
       if b_first_left is not None:
@@ -1013,7 +989,6 @@ def build_slide_from_geometry(
       p.font.color.rgb = parse_color_value(card.get("titleStyles", {}).get("color") if card.get("titleStyles") else None, RGBColor(96, 165, 250) if is_dark else brand_color_rgb)
       curr_top += Inches(0.38)
 
-    # Card Description
     if card.get("desc") and card["desc"]["text"] and not has_pipeline:
       d_box = slide.shapes.add_textbox(c_left + Inches(0.18), curr_top, c_w - Inches(0.36), Inches(0.36))
       tf = d_box.text_frame
@@ -1025,7 +1000,6 @@ def build_slide_from_geometry(
       p.font.color.rgb = parse_color_value(card["desc"]["styles"].get("color"), RGBColor(148, 163, 184) if is_dark else RGBColor(100, 116, 139))
       curr_top += Inches(0.40)
 
-    # Pipeline Steps
     for ps in card.get("pipelineSteps", []):
       psr = ps["rect"]
       ps_shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(psr["left"]), Inches(psr["top"]), Inches(psr["width"]), Inches(psr["height"]))
@@ -1052,7 +1026,6 @@ def build_slide_from_geometry(
         p1.font.size = Pt(9.5)
         p1.font.color.rgb = RGBColor(100, 116, 139)
 
-    # Inline Flows
     for fl in card.get("flows", []):
       for node in fl.get("nodes", []):
         nr = node["rect"]
@@ -1087,7 +1060,6 @@ def build_slide_from_geometry(
           p.font.color.rgb = parse_color_value(node["styles"].get("color"), brand_color_rgb if node.get("isHighlight") else RGBColor(30, 41, 59))
           p.alignment = PP_ALIGN.CENTER
 
-    # Feature Items
     for fi in card.get("fItems", []):
       fir = fi["rect"]
       ic_r = fi.get("iconRect")
@@ -1159,7 +1131,6 @@ def build_slide_from_geometry(
             RGBColor(17, 17, 21),
         )
 
-    # Sub-Cards
     for sc in card.get("subCards", []):
       scr = sc["rect"]
       sc_shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(scr["left"]), Inches(scr["top"]), Inches(scr["width"]), Inches(scr["height"]))
@@ -1195,7 +1166,6 @@ def build_slide_from_geometry(
         p_it.font.color.rgb = parse_color_value(sc["styles"].get("color"), RGBColor(203, 213, 225) if is_dark else RGBColor(30, 41, 59))
         p_idx += 1
 
-    # Code Blocks & Spec/Example Blocks
     for cb in card.get("codeBlocks", []):
       cbr = cb["rect"]
       cb_h = Inches(cbr["height"]) if cbr.get("height", 0) > 0.3 else Inches(0.40)
@@ -1225,7 +1195,6 @@ def build_slide_from_geometry(
         p.font.size = Pt(cb["styles"].get("fontSizePt", 9.0))
         p.font.color.rgb = parse_color_value(cb["styles"].get("color"), RGBColor(203, 213, 225) if is_dark else RGBColor(30, 41, 59))
 
-    # Remaining Paragraphs & List Items
     paras = card.get("paragraphs", [])
     if paras and not card.get("pipelineSteps"):
       if card.get("subCards") or card.get("hasCanvas") or card.get("hasSvgOrImg") or card.get("codeBlocks"):
@@ -1272,7 +1241,6 @@ def build_slide_from_geometry(
           p_col = parse_color_value(para["styles"]["color"], RGBColor(226, 232, 240) if is_dark else RGBColor(17, 17, 21))
           p.font.color.rgb = p_col
 
-  # 8. Native Tables
   for tbl in geom.get("tables", []):
     if tbl.get("num_rows", 0) > 0 and tbl.get("num_cols", 0) > 0:
       tr = tbl.get("rect", {})
@@ -1290,7 +1258,6 @@ def build_slide_from_geometry(
           font_name=font_name,
       )
 
-  # 9. Native Editable Charts (Chart.js Canvases)
   for ch in geom.get("charts", []):
     build_styled_native_chart(
         slide,
@@ -1300,7 +1267,6 @@ def build_slide_from_geometry(
         slide_bg_rgb=blend_rgb,
     )
 
-  # 10. Highlight / Callout Boxes
   for hl in geom.get("highlightBoxes", []):
     hl_r = hl.get("rect", {})
     hl_st = hl.get("styles", {})
@@ -1335,7 +1301,6 @@ def build_slide_from_geometry(
     p.font.bold = True
     p.font.color.rgb = parse_color_value(hl_st.get("color"), RGBColor(147, 197, 253) if is_dark else brand_color_rgb)
 
-  # 11. Footer Divider Line & Footnotes
   if geom.get("footerDividerTop"):
     f_div = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE,
@@ -1382,8 +1347,7 @@ def build_slide_from_geometry(
     if is_right_fn:
       p.alignment = PP_ALIGN.RIGHT
 
-  # 12. Embedded SVG & Image Visuals
-  embed_extracted_slide_images(slide, geom, screenshot_path)
+  embed_extracted_slide_images(slide, geom, screenshot_source)
 
 
 def ensure_slide_typography_consistency(
@@ -1392,7 +1356,6 @@ def ensure_slide_typography_consistency(
     default_color: Optional[RGBColor] = None,
     is_dark: bool = False,
 ) -> None:
-  """Guarantees 100% typography consistency across all paragraphs, runs, and table cells on the slide."""
   if default_color is None:
     default_color = RGBColor(241, 245, 249) if is_dark else RGBColor(17, 17, 21)
 
@@ -1437,7 +1400,6 @@ def ensure_slide_typography_consistency(
 
 
 def refine_card_accent_bars(slide) -> None:
-  """Refines any card top accent bars into sleek rounded capsule pills inset inside cards, and guarantees zero collision with text."""
   cards = [sh for sh in slide.shapes if sh.height.inches > 0.8 and sh.width.inches > 1.5 and sh.shape_type == 1]
   thin_bars = [
       sh for sh in slide.shapes
@@ -1456,7 +1418,7 @@ def refine_card_accent_bars(slide) -> None:
         b.width = max(Inches(0.5), c.width - (inset_x * 2))
         b.height = Inches(0.06)
         try:
-          b.adjustments[0] = 0.5  # Fully rounded capsule pill
+          b.adjustments[0] = 0.5
         except Exception:
           pass
         try:
@@ -1464,7 +1426,6 @@ def refine_card_accent_bars(slide) -> None:
         except Exception:
           pass
 
-        # Guarantee zero text collision: ensure text boxes inside card start below accent bar
         for tb in slide.shapes:
           if tb.has_text_frame and not tb.has_table and tb != c and tb != b:
             if c.left.inches - 0.1 <= tb.left.inches <= c.left.inches + c.width.inches + 0.1:
@@ -1474,8 +1435,6 @@ def refine_card_accent_bars(slide) -> None:
 
 
 def audit_and_resolve_slide_collisions(slide) -> None:
-  """Audits and guarantees zero shape collisions, deduplicates full-bleed backgrounds and text, and prevents badges from overlapping text."""
-  # 1. Deduplicate full bleed backgrounds
   bg_shapes = [
       s for s in slide.shapes
       if s.shape_type == 1 and s.left.inches <= 0.1 and s.top.inches <= 0.1 and s.width.inches >= 13.0 and s.height.inches >= 7.0
@@ -1487,7 +1446,6 @@ def audit_and_resolve_slide_collisions(slide) -> None:
       except Exception:
         pass
 
-  # 2. Deduplicate exact duplicate text frames at identical positions
   seen_signatures = set()
   for s in list(slide.shapes):
     if s.has_text_frame and not s.has_table:
@@ -1502,7 +1460,6 @@ def audit_and_resolve_slide_collisions(slide) -> None:
           continue
         seen_signatures.add(sig)
 
-  # 3. Resolve horizontal badge vs text collisions on the same visual row
   shapes = [
       s for s in slide.shapes
       if not (s.left.inches <= 0.1 and s.top.inches <= 0.1 and s.width.inches >= 13.0)
@@ -1520,22 +1477,18 @@ def audit_and_resolve_slide_collisions(slide) -> None:
       l2, t2, w2, h2 = s2.left.inches, s2.top.inches, s2.width.inches, s2.height.inches
       r2, b2 = l2 + w2, t2 + h2
 
-      # Skip if one contains the other (or if either shape is a card/container box)
       if l1 <= l2 + 0.08 and t1 <= t2 + 0.08 and r1 >= r2 - 0.30 and b1 >= b2 - 0.15:
         continue
       if l2 <= l1 + 0.08 and t2 <= t1 + 0.08 and r2 >= r1 - 0.30 and b2 >= b1 - 0.15:
         continue
 
-      # Only resolve horizontal collisions when both shapes are on the SAME horizontal line
       if abs(t1 - t2) > 0.12:
         continue
 
-      # Check overlap in both dimensions
       x_overlap = min(r1, r2) - max(l1, l2)
       y_overlap = min(b1, b2) - max(t1, t2)
 
       if x_overlap > 0.02 and y_overlap > 0.05:
-        # Case A: S1 is a small AUTO_SHAPE badge/icon to the left of S2 TEXT_BOX
         if s1.shape_type == 1 and s2.shape_type == 17 and w1 < 1.8 and h1 < 0.55 and l1 < l2 and l2 > l1 + w1 * 0.4:
           new_left = r1 + 0.06
           shift = new_left - l2
@@ -1543,13 +1496,11 @@ def audit_and_resolve_slide_collisions(slide) -> None:
           s2.width = Inches(max(0.6, w2 - shift))
           l2, r2 = new_left, new_left + max(0.6, w2 - shift)
 
-        # Case B: S1 is TEXT_BOX to the left of a small S2 AUTO_SHAPE badge
         elif s1.shape_type == 17 and s2.shape_type == 1 and w2 < 2.2 and h2 < 0.50 and l1 + 0.4 < l2:
           new_w = max(0.6, l2 - l1 - 0.06)
           s1.width = Inches(new_w)
           w1, r1 = new_w, l1 + new_w
 
-        # Case C: S1 and S2 are both TEXT_BOX on the same horizontal row
         elif s1.shape_type == 17 and s2.shape_type == 17 and l1 + 0.4 < l2:
           new_w = max(0.6, l2 - l1 - 0.06)
           s1.width = Inches(new_w)
@@ -1561,7 +1512,6 @@ def harmonize_deck_presentation_fidelity(
     default_font: str = "Pretendard",
     default_bg_hex: Optional[str] = None,
 ) -> None:
-  """Guarantees 100% deck-wide typography consistency, canvas background fill, font floors, and non-destructive accent bar safety."""
   is_dark = False
   deck_bg_rgb = RGBColor(255, 255, 255)
   if default_bg_hex:
@@ -1580,7 +1530,6 @@ def harmonize_deck_presentation_fidelity(
           pass
 
   for slide in prs.slides:
-    # Preserve slide's own existing full-bleed background if already set (never overwrite dark slide with white!)
     slide_bg_rgb = deck_bg_rgb
     slide_is_dark = is_dark
     for sh in slide.shapes:
@@ -1614,3 +1563,140 @@ def harmonize_deck_presentation_fidelity(
               r.font.size = p.font.size
 
 
+def build_native_slide_from_code(
+    slide,
+    prs: Presentation,
+    code_str: Optional[str],
+    screenshot_source: Optional[Union[bytes, str]] = None,
+    design_tokens: Optional[Dict[str, Any]] = None,
+    slide_dom_data: Optional[Dict[str, Any]] = None,
+    slide_geometry: Optional[Dict[str, Any]] = None,
+) -> None:
+  font_family = (design_tokens or {}).get("font_name", "Pretendard")
+  text_color_hex = (design_tokens or {}).get("text_main_hex", "#111115")
+  default_text_color = _hex_to_pptx_color(text_color_hex, default=(17, 17, 21))
+  brand_color = _hex_to_pptx_color((design_tokens or {}).get("brand_color_hex"), default=(37, 99, 235))
+
+  geom_bg = (slide_geometry or {}).get("slideBgColor")
+  token_bg = (design_tokens or {}).get("bg_color_hex")
+  slide_bg_rgb = parse_color_value(geom_bg or token_bg, default=RGBColor(255, 255, 255))
+  is_dark = (slide_bg_rgb[0] * 0.299 + slide_bg_rgb[1] * 0.587 + slide_bg_rgb[2] * 0.114) < 128
+  if default_text_color == RGBColor(17, 17, 21) and is_dark:
+    default_text_color = RGBColor(241, 245, 249)
+
+  ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
+
+  def _build_deterministic_fallback() -> None:
+    if slide_geometry:
+      build_slide_from_geometry(
+          slide,
+          slide_geometry,
+          font_name=font_family,
+          brand_color_rgb=brand_color,
+          screenshot_source=screenshot_source,
+      )
+      ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
+      ensure_slide_typography_consistency(slide, default_font=font_family, default_color=default_text_color, is_dark=is_dark)
+      refine_card_accent_bars(slide)
+      audit_and_resolve_slide_collisions(slide)
+      return
+    if slide_dom_data and slide_dom_data.get("tables"):
+      t_data = slide_dom_data["tables"][0]
+      build_styled_native_table(slide, t_data, Inches(0.8), Inches(1.95), Inches(11.733), Inches(4.5), font_name=font_family)
+      ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
+      ensure_slide_typography_consistency(slide, default_font=font_family, default_color=default_text_color, is_dark=is_dark)
+
+  if not code_str:
+    _build_deterministic_fallback()
+    return
+
+  clean_code = code_str
+  if "```python" in clean_code:
+    clean_code = clean_code.split("```python", 1)[1].split("```", 1)[0].strip()
+  elif "```" in clean_code:
+    clean_code = clean_code.split("```", 1)[1].split("```", 1)[0].strip()
+
+  scope = {
+      "prs": prs,
+      "slide": slide,
+      "Presentation": Presentation,
+      "Inches": Inches,
+      "Pt": Pt,
+      "RGBColor": RGBColor,
+      "MSO_SHAPE": MSO_SHAPE,
+      "PP_ALIGN": PP_ALIGN,
+      "MSO_ANCHOR": MSO_ANCHOR,
+      "build_styled_native_table": build_styled_native_table,
+      "build_styled_native_chart": build_styled_native_chart,
+  }
+
+  try:
+    exec(clean_code, scope)
+    if "build_slide" in scope:
+      func = scope["build_slide"]
+      sig = inspect.signature(func)
+      if len(sig.parameters) == 1:
+        func(slide)
+      else:
+        func(prs, slide)
+
+      ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
+
+      tbl_dom = (
+          slide_geometry.get("tables", [{}])[0]
+          if slide_geometry and slide_geometry.get("tables")
+          else (slide_dom_data.get("tables", [{}])[0] if slide_dom_data and slide_dom_data.get("tables") else None)
+      )
+      if tbl_dom:
+        has_table_shape = any(s.has_table for s in slide.shapes)
+        if not has_table_shape and tbl_dom.get("rows"):
+          tbl_r = tbl_dom.get("rect", {})
+          t_left = Inches(tbl_r.get("left", 0.6))
+          t_top = Inches(tbl_r.get("top", 1.5))
+          t_w = Inches(min(tbl_r.get("width", 12.0), 12.2))
+          t_h = Inches(tbl_r.get("height", 3.0))
+          tbl_copy = dict(tbl_dom)
+          tbl_copy["is_dark"] = is_dark
+          tbl_copy["slide_bg_rgb"] = (slide_bg_rgb[0], slide_bg_rgb[1], slide_bg_rgb[2])
+          build_styled_native_table(slide, tbl_copy, t_left, t_top, t_w, t_h, font_name=font_family)
+        else:
+          for s in slide.shapes:
+            if s.has_table:
+              apply_semantic_styles_to_table(
+                  s,
+                  tbl_dom,
+                  font_name=font_family,
+                  is_dark=is_dark,
+                  slide_bg_rgb=(slide_bg_rgb[0], slide_bg_rgb[1], slide_bg_rgb[2]),
+              )
+
+      if slide_geometry and slide_geometry.get("charts"):
+        has_chart_shape = any(getattr(s, "has_chart", False) for s in slide.shapes)
+        if not has_chart_shape:
+          for ch in slide_geometry["charts"]:
+            build_styled_native_chart(
+                slide,
+                ch,
+                font_name=font_family,
+                is_dark=is_dark,
+                slide_bg_rgb=(slide_bg_rgb[0], slide_bg_rgb[1], slide_bg_rgb[2]),
+            )
+
+      if slide_geometry:
+        embed_extracted_slide_images(slide, slide_geometry, screenshot_source)
+
+      ensure_slide_typography_consistency(slide, default_font=font_family, default_color=default_text_color, is_dark=is_dark)
+      refine_card_accent_bars(slide)
+      audit_and_resolve_slide_collisions(slide)
+    elif len(slide.shapes) > 1:
+      if slide_geometry:
+        embed_extracted_slide_images(slide, slide_geometry, screenshot_source)
+      ensure_slide_canvas_background(slide, prs=prs, bg_color=slide_bg_rgb, is_dark=is_dark)
+      ensure_slide_typography_consistency(slide, default_font=font_family, default_color=default_text_color, is_dark=is_dark)
+      refine_card_accent_bars(slide)
+      audit_and_resolve_slide_collisions(slide)
+    else:
+      _build_deterministic_fallback()
+  except Exception as e:
+    logger.warning("[Execution Error in custom slide builder code]: %s", e)
+    _build_deterministic_fallback()

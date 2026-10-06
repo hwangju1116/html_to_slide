@@ -1,5 +1,0 @@
-{
-  "name": "html-to-pptx",
-  "version": "1.0.0",
-  "description": "Standalone MCP-powered Skill that converts single or multi-slide HTML presentations into 100% editable 16:9 PowerPoint (.pptx) decks."
-}

@@ -1,4 +1,3 @@
-# Python & Virtual Environment
 .venv
 .venv/
 venv
@@ -11,21 +10,9 @@ dist/
 build/
 .pytest_cache/
 
-# Generated Local MCP Config (contains user's local paths & GCP project)
-mcp_config.json
-
-# Terraform State & Local Variables
-terraform/.terraform/
-terraform/.terraform.lock.hcl
-terraform/*.tfstate
-terraform/*.tfstate.*
-terraform/terraform.tfvars
-
-# Generated Slide / PPTX Outputs
 *.pptx
 /tmp/
 
-# Local Binary Font Assets
 assets/fonts/
 *.otf
 *.ttf
