@@ -238,56 +238,230 @@ def format_slide_manifest_markdown(
     slide_dom: Optional[Dict[str, Any]],
     slide_geom: Optional[Dict[str, Any]],
 ) -> str:
+    font_family = design_tokens.get("font_name", "Pretendard")
+    brand_hex = design_tokens.get("brand_color_hex", "#2563EB")
+    bg_hex = (slide_geom or {}).get("slideBgColor") or design_tokens.get("bg_color_hex", "#FFFFFF")
+    text_main_hex = design_tokens.get("text_main_hex", "#111115")
+
     lines = [
+        f"================================================================================",
         f"## Slide {slide_idx} (`{slide_id}`) — `def build_slide_{slide_idx}(prs, slide):`",
+        f"================================================================================",
+        f"- **Rendered 16:9 Screenshot**: `{screenshot_path or 'N/A'}`",
+        f"- **Canvas Background Color**: `{bg_hex}`",
+        f"- **Brand Primary Color**: `{brand_hex}`",
+        f"- **Primary Font Family**: `{font_family}`",
+        f"- **Primary Text Color**: `{text_main_hex}`",
     ]
-    if screenshot_path:
-        lines.append(f"- **Rendered 16:9 Screenshot**: `{screenshot_path}`")
-    lines.append(f"- **Canvas Background**: `{(slide_geom or {}).get('slideBgColor') or design_tokens.get('bg_color_hex', '#FFFFFF')}`")
-    lines.append(f"- **Brand Color**: `{design_tokens.get('brand_color_hex', '#2563EB')}`")
-    lines.append(f"- **Primary Font**: `{design_tokens.get('font_name', 'Pretendard')}`")
 
     if slide_geom:
+        if slide_geom.get("headerBadges"):
+            for hb_i, hb in enumerate(slide_geom["headerBadges"], 1):
+                hbr = hb.get("rect", {})
+                hbs = hb.get("styles", {})
+                lines.append(
+                    f"- **Header Badge {hb_i}**: `{hb.get('text')}` at `left={hbr.get('left')}\", top={hbr.get('top')}\", width={hbr.get('width')}\", height={hbr.get('height')}\"` "
+                    f"(bg=`{hbs.get('backgroundColor')}`, color=`{hbs.get('color')}`, fontSize=`{hbs.get('fontSizePt')}pt`)"
+                )
+        if slide_geom.get("num"):
+            nm = slide_geom["num"]
+            nmr = nm.get("rect", {})
+            lines.append(
+                f"- **Slide Number**: `{nm.get('text')}` at `left={nmr.get('left')}\", top={nmr.get('top')}\", width={nmr.get('width')}\", height={nmr.get('height')}\"`"
+            )
         if slide_geom.get("title"):
             t = slide_geom["title"]
             tr = t.get("rect", {})
+            ts = t.get("styles", {})
             lines.append(
-                f"- **Title**: `{t.get('text')}` at `left={tr.get('left')}\", top={tr.get('top')}\", width={tr.get('width')}\", height={tr.get('height')}\"` (`fontSizePt={t.get('styles', {}).get('fontSizePt')}`, `color={t.get('styles', {}).get('color')}`)"
+                f"- **Main Title**: `{t.get('text')}` at `left={tr.get('left')}\", top={tr.get('top')}\", width={tr.get('width')}\", height={tr.get('height')}\"` "
+                f"(`fontSizePt={ts.get('fontSizePt')}`, `color={ts.get('color')}`, `runs={t.get('runs')}`)"
             )
         if slide_geom.get("sub"):
             sb = slide_geom["sub"]
             sbr = sb.get("rect", {})
+            sbs = sb.get("styles", {})
             lines.append(
-                f"- **Subtitle**: `{sb.get('text')}` at `left={sbr.get('left')}\", top={sbr.get('top')}\", width={sbr.get('width')}\", height={sbr.get('height')}\"` (`fontSizePt={sb.get('styles', {}).get('fontSizePt')}`, `color={sb.get('styles', {}).get('color')}`)"
+                f"- **Subtitle / Premise**: `{sb.get('text')}` at `left={sbr.get('left')}\", top={sbr.get('top')}\", width={sbr.get('width')}\", height={sbr.get('height')}\"` "
+                f"(`fontSizePt={sbs.get('fontSizePt')}`, `color={sbs.get('color')}`)"
             )
+        if slide_geom.get("desc"):
+            for d_i, d in enumerate(slide_geom["desc"], 1):
+                dr = d.get("rect", {})
+                ds = d.get("styles", {})
+                lines.append(
+                    f"- **Description {d_i}**: `{d.get('text')}` at `left={dr.get('left')}\", top={dr.get('top')}\", width={dr.get('width')}\", height={dr.get('height')}\"` (`color={ds.get('color')}`)"
+                )
+
         if slide_geom.get("tables"):
             lines.append(f"- **Native Tables ({len(slide_geom['tables'])})**:")
             for t_i, tbl in enumerate(slide_geom["tables"], 1):
                 tr = tbl.get("rect", {})
                 lines.append(
-                    f"  - Table {t_i}: `{tbl.get('num_rows')}x{tbl.get('num_cols')}` at `left={tr.get('left')}\", top={tr.get('top')}\", width={tr.get('width')}\", height={tr.get('height')}\"` (`inCard={tbl.get('inCard')}`, `cardTitle={tbl.get('cardTitle')}`)"
+                    f"  - Table {t_i}: `{tbl.get('num_rows')} rows x {tbl.get('num_cols')} cols` at "
+                    f"`left={tr.get('left')}\", top={tr.get('top')}\", width={tr.get('width')}\", height={tr.get('height')}\"` "
+                    f"(`inCard={tbl.get('inCard')}`, `cardTitle={tbl.get('cardTitle')}`, `cardTitleColor={tbl.get('cardTitleColor')}`)"
                 )
-                headers_str = [h["text"] if isinstance(h, dict) else str(h) for h in tbl.get("headers", [])]
-                lines.append(f"    - Headers: `{headers_str}`")
+                lines.append(f"    - Headers: `{tbl.get('headers', [])}`")
                 for r_i, row in enumerate(tbl.get("rows", []), 1):
-                    r_desc = [f"{c['text']} (color={c.get('color')}, bold={c.get('is_bold')})" for c in row]
+                    r_desc = [
+                        f"{c['text']} (color={c.get('color')}, bg={c.get('bgColor')}, bold={c.get('is_bold')}, badge={c.get('has_badge')})"
+                        for c in row
+                    ]
                     lines.append(f"    - Row {r_i}: {' | '.join(r_desc)}")
+            lines.append(
+                "  - **[TABLE BUILDER INSTRUCTIONS]**: Use `build_styled_native_table(slide, tbl, Inches(left), Inches(top), Inches(width), Inches(height), font_name=...)` or `apply_semantic_styles_to_table(table_shape, tbl, ...)` so exact cell colors, header fills, and bolding are preserved."
+            )
+
+        if slide_geom.get("charts"):
+            lines.append(f"- **Native Charts ({len(slide_geom['charts'])})**:")
+            for ch_i, ch in enumerate(slide_geom["charts"], 1):
+                chr_r = ch.get("rect", {})
+                cfg = ch.get("chartConfig") or {}
+                lines.append(
+                    f"  - Chart {ch_i} (`id={ch.get('id')}`): type=`{cfg.get('type')}`, indexAxis=`{cfg.get('indexAxis')}` at "
+                    f"`left={chr_r.get('left')}\", top={chr_r.get('top')}\", width={chr_r.get('width')}\", height={chr_r.get('height')}\"`"
+                )
+                lines.append(f"    - Labels: `{cfg.get('labels')}`")
+                lines.append(f"    - Datasets: `{cfg.get('datasets')}`")
+            lines.append(
+                "  - **[CHART BUILDER INSTRUCTIONS]**: Call `build_styled_native_chart(slide, ch, font_name=..., is_dark=..., slide_bg_rgb=...)` for each item in `charts_data` (or `slide_geometry['charts']`) to render 100% native editable PowerPoint charts with exact dataset colors."
+            )
+
         if slide_geom.get("cards"):
-            lines.append(f"- **Cards ({len(slide_geom['cards'])})**:")
+            lines.append(f"- **Container Cards & Panels ({len(slide_geom['cards'])})**:")
             for c_i, c in enumerate(slide_geom["cards"], 1):
                 cr = c.get("rect", {})
+                cs = c.get("styles", {})
                 lines.append(
-                    f"  - Card {c_i}: title=`{c.get('title')}` at `left={cr.get('left')}\", top={cr.get('top')}\", width={cr.get('width')}\", height={cr.get('height')}\"` (`topAccent={c.get('topAccentColor') if c.get('hasTopAccent') else 'none'}`)"
+                    f"  - Card {c_i}: title=`{c.get('title')}` at `left={cr.get('left')}\", top={cr.get('top')}\", width={cr.get('width')}\", height={cr.get('height')}\"` "
+                    f"(fill=`{cs.get('backgroundColor')}`, border=`{cs.get('borderColor')}`, "
+                    f"topAccent=`{c.get('topAccentColor') if c.get('hasTopAccent') else 'none'}`, "
+                    f"leftAccent=`{c.get('leftAccentColor') if c.get('hasLeftAccent') else 'none'}`)"
                 )
+                if c.get("tag"):
+                    lines.append(f"    - Tag: `{c['tag'].get('text')}` (color=`{c['tag'].get('styles', {}).get('color')}`, bg=`{c['tag'].get('styles', {}).get('backgroundColor')}`)")
+                if c.get("titleStyles"):
+                    lines.append(f"    - Title Style: color=`{c['titleStyles'].get('color')}`, size=`{c['titleStyles'].get('fontSizePt')}pt`")
+                if c.get("desc"):
+                    lines.append(f"    - Card Desc: `{c['desc'].get('text')}` (color=`{c['desc'].get('styles', {}).get('color')}`)")
+                if c.get("isBridge") and c.get("bridge"):
+                    lines.append(f"    - Bridge Badge: `{c['bridge']}`")
+                if c.get("isAttachCard") and c.get("attachData"):
+                    lines.append(f"    - Attach Card Data: `{c['attachData']}`")
+                if c.get("pipelineSteps"):
+                    lines.append(f"    - Pipeline / Process Steps ({len(c['pipelineSteps'])}):")
+                    for ps_i, ps in enumerate(c["pipelineSteps"], 1):
+                        psr = ps.get("rect", {})
+                        pss = ps.get("styles", {})
+                        lines.append(
+                            f"      - Step {ps_i} (`stepNum={ps.get('stepNum')}`): title=`{ps.get('title')}` (color=`{(ps.get('titleStyles') or {}).get('color')}`), "
+                            f"desc=`{ps.get('desc')}` (color=`{(ps.get('descStyles') or {}).get('color')}`) at "
+                            f"`left={psr.get('left')}\", top={psr.get('top')}\", width={psr.get('width')}\", height={psr.get('height')}\"` "
+                            f"(bg=`{pss.get('backgroundColor')}`, border=`{pss.get('borderColor')}`, align=`{pss.get('textAlign')}`)"
+                        )
+                if c.get("flows"):
+                    lines.append(f"    - Process Flows ({len(c['flows'])}):")
+                    for fl_i, fl in enumerate(c["flows"], 1):
+                        flr = fl.get("rect", {})
+                        fls = fl.get("styles", {})
+                        lines.append(
+                            f"      - Flow {fl_i} at `left={flr.get('left')}\", top={flr.get('top')}\", width={flr.get('width')}\", height={flr.get('height')}\"` (bg=`{fls.get('backgroundColor')}`):"
+                        )
+                        for n_i, nd in enumerate(fl.get("nodes", []), 1):
+                            ndr = nd.get("rect", {})
+                            nds = nd.get("styles", {})
+                            lines.append(
+                                f"        - Node {n_i}: `{nd.get('text')}` (`isArrow={nd.get('isArrow')}`, `isHighlight={nd.get('isHighlight')}`, "
+                                f"bg=`{nds.get('backgroundColor')}`, color=`{nds.get('color')}`, border=`{nds.get('borderColor')}`) at "
+                                f"`left={ndr.get('left')}\", top={ndr.get('top')}\", width={ndr.get('width')}\", height={ndr.get('height')}\"`"
+                            )
+                if c.get("fItems"):
+                    lines.append(f"    - Feature Items ({len(c['fItems'])}):")
+                    for fi_i, fi in enumerate(c["fItems"], 1):
+                        fir = fi.get("rect", {})
+                        lines.append(
+                            f"      - FItem {fi_i}: icon=`{fi.get('icon')}` (bg=`{(fi.get('iconStyles') or {}).get('backgroundColor')}`, color=`{(fi.get('iconStyles') or {}).get('color')}`), "
+                            f"text=`{fi.get('text')}` (color=`{(fi.get('textStyles') or {}).get('color')}`) at "
+                            f"`left={fir.get('left')}\", top={fir.get('top')}\", width={fir.get('width')}\", height={fir.get('height')}\"`"
+                        )
+                if c.get("subCards"):
+                    lines.append(f"    - Sub-Cards ({len(c['subCards'])}):")
+                    for sc_i, sc in enumerate(c["subCards"], 1):
+                        scr = sc.get("rect", {})
+                        scs = sc.get("styles", {})
+                        lines.append(
+                            f"      - SubCard {sc_i}: head=`{sc.get('head')}` (badge=`{sc.get('badge')}`, headColor=`{(sc.get('headStyles') or {}).get('color')}`), "
+                            f"items=`{sc.get('items')}` at `left={scr.get('left')}\", top={scr.get('top')}\", width={scr.get('width')}\", height={scr.get('height')}\"` "
+                            f"(bg=`{scs.get('backgroundColor')}`, border=`{scs.get('borderColor')}`, textColor=`{scs.get('color')}`)"
+                        )
+                if c.get("badges"):
+                    for b_i, b in enumerate(c["badges"], 1):
+                        br = b.get("rect", {})
+                        bs = b.get("styles", {})
+                        lines.append(
+                            f"    - Badge {b_i}: `{b.get('text')}` at `left={br.get('left')}\", top={br.get('top')}\", width={br.get('width')}\", height={br.get('height')}\"` (bg=`{bs.get('backgroundColor')}`, color=`{bs.get('color')}`)"
+                        )
+                if c.get("codeBlocks"):
+                    for cb_i, cb in enumerate(c["codeBlocks"], 1):
+                        cbr = cb.get("rect", {})
+                        lines.append(
+                            f"    - CodeBlock {cb_i}: `{cb.get('text')}` at `left={cbr.get('left')}\", top={cbr.get('top')}\", width={cbr.get('width')}\", height={cbr.get('height')}\"`"
+                        )
+                if c.get("paragraphs"):
+                    for p_i, p in enumerate(c["paragraphs"], 1):
+                        pr = p.get("rect", {})
+                        ps = p.get("styles", {})
+                        lines.append(
+                            f"    - Paragraph {p_i} (`isList={p.get('isList')}`): `{p.get('text')}` at "
+                            f"`left={pr.get('left')}\", top={pr.get('top')}\", width={pr.get('width')}\", height={pr.get('height')}\"` "
+                            f"(color=`{ps.get('color')}`, bold=`{ps.get('isBold')}`, size=`{ps.get('fontSizePt')}pt`, runs=`{p.get('runs')}`)"
+                        )
+
         if slide_geom.get("highlightBoxes"):
             for h_i, hl in enumerate(slide_geom["highlightBoxes"], 1):
                 hr = hl.get("rect", {})
+                hs = hl.get("styles", {})
                 lines.append(
-                    f"- **Highlight Box {h_i}**: `{hl.get('text')}` at `left={hr.get('left')}\", top={hr.get('top')}\", width={hr.get('width')}\", height={hr.get('height')}\"`"
+                    f"- **Highlight / Callout Banner {h_i}**: `{hl.get('text')}` at `left={hr.get('left')}\", top={hr.get('top')}\", width={hr.get('width')}\", height={hr.get('height')}\"` "
+                    f"(bg=`{hs.get('backgroundColor')}`, border=`{hs.get('borderColor')}`, color=`{hs.get('color')}`)"
                 )
-    elif slide_dom:
-        lines.append(f"- **Title**: `{slide_dom.get('title')}`")
-        lines.append(f"- **Subtitle**: `{slide_dom.get('subtitle')}`")
+
+        if slide_geom.get("footnotes"):
+            for fn_i, fn in enumerate(slide_geom["footnotes"], 1):
+                fnr = fn.get("rect", {})
+                fns = fn.get("styles", {})
+                lines.append(
+                    f"- **Footnote {fn_i}**: `{fn.get('text')}` at `left={fnr.get('left')}\", top={fnr.get('top')}\", width={fnr.get('width')}\", height={fnr.get('height')}\"` (`color={fns.get('color')}`)"
+                )
+
+        geom_for_prompt = dict(slide_geom)
+        if geom_for_prompt.get("charts"):
+            clean_charts = []
+            for ch in geom_for_prompt["charts"]:
+                ch_copy = dict(ch)
+                if "dataUrl" in ch_copy:
+                    ch_copy["dataUrl"] = "<omitted_base64_png>"
+                clean_charts.append(ch_copy)
+            geom_for_prompt["charts"] = clean_charts
+
+        lines.extend([
+            "",
+            "### [EXACT MEASURED BROWSER LAYOUT GEOMETRY (PIXEL-PERFECT INCHES)]",
+            "```json",
+            json.dumps(geom_for_prompt, ensure_ascii=False, indent=2),
+            "```",
+        ])
+
+    if slide_dom and slide_dom.get("raw_html"):
+        raw_html_snippet = slide_dom["raw_html"][:6000]
+        lines.extend([
+            "",
+            "### [SLIDE ORIGINAL HTML SOURCE]",
+            "```html",
+            raw_html_snippet,
+            "```",
+        ])
 
     lines.append("")
     return "\n".join(lines)
@@ -365,7 +539,12 @@ def prepare_html_for_host_ai(
     manifest_sections = [
         "# [AUTHENTIC SLIDE STRUCTURE & STYLE MANIFEST]",
         "",
-        "Use the rendered 16:9 PNG screenshots and the exact live DOM geometry below when writing custom `build_slide_<N>(prs, slide)` functions.",
+        "## [STRICT INSTRUCTIONS FOR THE SLIDE BUILDER AI]",
+        "1. **Visual & Coordinate Grounding**: Inspect each slide's rendered 16:9 PNG screenshot (`slide-<N>.png`) alongside its `[EXACT MEASURED BROWSER LAYOUT GEOMETRY]` below. Use the exact `left`, `top`, `width`, `height` inch coordinates (`Inches(...)`) from the measured browser geometry so there are zero overlaps and zero layout shifts.",
+        "2. **Exact Colors & Typography**: Preserve 100% of the exact RGB/HEX colors (`color`, `backgroundColor`, `borderColor`, `topAccentColor`, `leftAccentColor`, colored text `runs`) and Korean/English text strings. Do not substitute generic grey or default blue when the DOM specifies an explicit color.",
+        "3. **Processes, Flows, and Sub-Cards**: Render every `pipelineSteps` item, `flows` container/node/arrow, `fItems` icon/text row, and `subCards` box as native PowerPoint `ROUNDED_RECTANGLE` shapes and textboxes at their exact measured coordinates.",
+        "4. **Native Charts & Tables**: Always use `build_styled_native_chart(slide, ch, ...)` for `charts_data` and `build_styled_native_table(slide, tbl, ...)` for `table_data`. You can also call `build_slide_from_geometry(slide, slide_geometry)` as a base and customize or build each slide directly in `def build_slide_<N>(prs, slide):`.",
+        "5. **16:9 Canvas**: Assume `prs.slide_width = Inches(13.333333)` and `prs.slide_height = Inches(7.5)`.",
         "",
     ]
     for idx, sid in enumerate(slide_ids):
