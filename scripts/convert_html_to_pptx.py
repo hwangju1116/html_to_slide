@@ -125,12 +125,12 @@ def parse_slide_semantic_data(slide_elem, css_vars_raw: Dict[str, str]) -> Dict[
                         else:
                             runs.append({"text": n.text_content(), "bold": is_parent_bold})
 
-                hex_color = f"#{color_rgb[0]:02X}{color_rgb[1]:02X}{color_rgb[2]:02X}"
+                hex_color = f"{chr(35)}{color_rgb[0]:02X}{color_rgb[1]:02X}{color_rgb[2]:02X}"
                 row_cells.append({
                     "text": text,
                     "color_hex": hex_color,
                     "color_rgb": (color_rgb[0], color_rgb[1], color_rgb[2]),
-                    "is_bold": is_parent_bold or bool(td.xpath(".//b | .//strong")),
+                    "is_bold": is_parent_bold,
                     "has_badge": has_badge,
                     "badge_text": badge_str,
                     "runs": runs,
@@ -239,16 +239,16 @@ def format_slide_manifest_markdown(
     slide_geom: Optional[Dict[str, Any]],
 ) -> str:
     font_family = design_tokens.get("font_name", "Pretendard")
-    brand_hex = design_tokens.get("brand_color_hex", "#2563EB")
-    bg_hex = (slide_geom or {}).get("slideBgColor") or design_tokens.get("bg_color_hex", "#FFFFFF")
-    text_main_hex = design_tokens.get("text_main_hex", "#111115")
+    brand_hex = design_tokens.get("brand_color_hex", f"{chr(35)}2563EB")
+    bg_hex = (slide_geom or {}).get("slideBgColor") or design_tokens.get("bg_color_hex", f"{chr(35)}FFFFFF")
+    text_main_hex = design_tokens.get("text_main_hex", f"{chr(35)}111115")
 
     lines = [
         f"================================================================================",
-        f"## Slide {slide_idx} (`{slide_id}`) — `def build_slide_{slide_idx}(prs, slide):`",
+        f"{chr(35)}{chr(35)} Slide {slide_idx} (`{slide_id}`) — `def build_slide_{slide_idx}(prs, slide):`",
         f"================================================================================",
         f"- **Rendered 16:9 Screenshot**: `{screenshot_path or 'N/A'}`",
-        f"- **Canvas Background Color**: `{bg_hex}`",
+        f"- **Canvas Background Color**: `{bg_hex}` (gradient=`{(slide_geom or {}).get('slideBgGradient')}`)",
         f"- **Brand Primary Color**: `{brand_hex}`",
         f"- **Primary Font Family**: `{font_family}`",
         f"- **Primary Text Color**: `{text_main_hex}`",
@@ -283,7 +283,7 @@ def format_slide_manifest_markdown(
             sbs = sb.get("styles", {})
             lines.append(
                 f"- **Subtitle / Premise**: `{sb.get('text')}` at `left={sbr.get('left')}\", top={sbr.get('top')}\", width={sbr.get('width')}\", height={sbr.get('height')}\"` "
-                f"(`fontSizePt={sbs.get('fontSizePt')}`, `color={sbs.get('color')}`)"
+                f"(`fontSizePt={sbs.get('fontSizePt')}`, `color={sbs.get('color')}`, `runs={sb.get('runs')}`)"
             )
         if slide_geom.get("desc"):
             for d_i, d in enumerate(slide_geom["desc"], 1):
@@ -292,6 +292,16 @@ def format_slide_manifest_markdown(
                 lines.append(
                     f"- **Description {d_i}**: `{d.get('text')}` at `left={dr.get('left')}\", top={dr.get('top')}\", width={dr.get('width')}\", height={dr.get('height')}\"` (`color={ds.get('color')}`)"
                 )
+        if slide_geom.get("decorShapes"):
+            lines.append(f"- **Decorative / Pseudo-Element Shapes ({len(slide_geom['decorShapes'])})**: `{slide_geom['decorShapes']}`")
+        if slide_geom.get("images"):
+            lines.append(
+                f"- **Images / Vector SVGs ({len(slide_geom['images'])})**: "
+                + ", ".join(
+                    f"`{im.get('tagName')}` at `{im.get('rect')}` (svgPrimitives={len(im.get('svgPrimitives') or [])})"
+                    for im in slide_geom["images"]
+                )
+            )
 
         if slide_geom.get("tables"):
             lines.append(f"- **Native Tables ({len(slide_geom['tables'])})**:")
@@ -300,17 +310,17 @@ def format_slide_manifest_markdown(
                 lines.append(
                     f"  - Table {t_i}: `{tbl.get('num_rows')} rows x {tbl.get('num_cols')} cols` at "
                     f"`left={tr.get('left')}\", top={tr.get('top')}\", width={tr.get('width')}\", height={tr.get('height')}\"` "
-                    f"(`inCard={tbl.get('inCard')}`, `cardTitle={tbl.get('cardTitle')}`, `cardTitleColor={tbl.get('cardTitleColor')}`)"
+                    f"(`colRatios={tbl.get('colRatios')}`, `inCard={tbl.get('inCard')}`, `hasShadow={tbl.get('hasShadow')}`, `cardTitle={tbl.get('cardTitle')}`)"
                 )
                 lines.append(f"    - Headers: `{tbl.get('headers', [])}`")
                 for r_i, row in enumerate(tbl.get("rows", []), 1):
                     r_desc = [
-                        f"{c['text']} (color={c.get('color')}, bg={c.get('bgColor')}, bold={c.get('is_bold')}, badge={c.get('has_badge')})"
+                        f"{c['text']} (color={c.get('color')}, bg={c.get('bgColor')}, bold={c.get('is_bold')}, runs={c.get('runs')})"
                         for c in row
                     ]
                     lines.append(f"    - Row {r_i}: {' | '.join(r_desc)}")
             lines.append(
-                "  - **[TABLE BUILDER INSTRUCTIONS]**: Use `build_styled_native_table(slide, tbl, Inches(left), Inches(top), Inches(width), Inches(height), font_name=...)` or `apply_semantic_styles_to_table(table_shape, tbl, ...)` so exact cell colors, header fills, and bolding are preserved."
+                "  - **[TABLE BUILDER INSTRUCTIONS]**: Use `build_styled_native_table(slide, tbl, Inches(left), Inches(top), Inches(width), Inches(height), font_name=...)` or `build_slide_from_geometry(slide, slide_geometry)` so exact column ratios, cell colors, inline badges/tags (`.score`, `.tag`), `<code>` highlights, `.sub` multi-line spans, and partial `<b>` bolding are preserved."
             )
 
         if slide_geom.get("charts"):
@@ -335,14 +345,14 @@ def format_slide_manifest_markdown(
                 cs = c.get("styles", {})
                 lines.append(
                     f"  - Card {c_i}: title=`{c.get('title')}` at `left={cr.get('left')}\", top={cr.get('top')}\", width={cr.get('width')}\", height={cr.get('height')}\"` "
-                    f"(fill=`{cs.get('backgroundColor')}`, border=`{cs.get('borderColor')}`, "
+                    f"(fill=`{cs.get('backgroundColor')}`, gradient=`{cs.get('gradient')}`, hasShadow=`{cs.get('hasShadow')}`, border=`{cs.get('borderColor')}`, "
                     f"topAccent=`{c.get('topAccentColor') if c.get('hasTopAccent') else 'none'}`, "
                     f"leftAccent=`{c.get('leftAccentColor') if c.get('hasLeftAccent') else 'none'}`)"
                 )
                 if c.get("tag"):
                     lines.append(f"    - Tag: `{c['tag'].get('text')}` (color=`{c['tag'].get('styles', {}).get('color')}`, bg=`{c['tag'].get('styles', {}).get('backgroundColor')}`)")
                 if c.get("titleStyles"):
-                    lines.append(f"    - Title Style: color=`{c['titleStyles'].get('color')}`, size=`{c['titleStyles'].get('fontSizePt')}pt`")
+                    lines.append(f"    - Title Style: color=`{c['titleStyles'].get('color')}`, size=`{c['titleStyles'].get('fontSizePt')}pt`, runs=`{c.get('titleRuns')}`")
                 if c.get("desc"):
                     lines.append(f"    - Card Desc: `{c['desc'].get('text')}` (color=`{c['desc'].get('styles', {}).get('color')}`)")
                 if c.get("isBridge") and c.get("bridge"):
@@ -393,7 +403,7 @@ def format_slide_manifest_markdown(
                         lines.append(
                             f"      - SubCard {sc_i}: head=`{sc.get('head')}` (badge=`{sc.get('badge')}`, headColor=`{(sc.get('headStyles') or {}).get('color')}`), "
                             f"items=`{sc.get('items')}` at `left={scr.get('left')}\", top={scr.get('top')}\", width={scr.get('width')}\", height={scr.get('height')}\"` "
-                            f"(bg=`{scs.get('backgroundColor')}`, border=`{scs.get('borderColor')}`, textColor=`{scs.get('color')}`)"
+                            f"(bg=`{scs.get('backgroundColor')}`, gradient=`{scs.get('gradient')}`, border=`{scs.get('borderColor')}`, textColor=`{scs.get('color')}`)"
                         )
                 if c.get("badges"):
                     for b_i, b in enumerate(c["badges"], 1):
@@ -406,7 +416,7 @@ def format_slide_manifest_markdown(
                     for cb_i, cb in enumerate(c["codeBlocks"], 1):
                         cbr = cb.get("rect", {})
                         lines.append(
-                            f"    - CodeBlock {cb_i}: `{cb.get('text')}` at `left={cbr.get('left')}\", top={cbr.get('top')}\", width={cbr.get('width')}\", height={cbr.get('height')}\"`"
+                            f"    - CodeBlock {cb_i}: `{cb.get('text')}` at `left={cbr.get('left')}\", top={cbr.get('top')}\", width={cbr.get('width')}\", height={cbr.get('height')}\"` (runs=`{cb.get('runs')}`)"
                         )
                 if c.get("paragraphs"):
                     for p_i, p in enumerate(c["paragraphs"], 1):
@@ -424,7 +434,7 @@ def format_slide_manifest_markdown(
                 hs = hl.get("styles", {})
                 lines.append(
                     f"- **Highlight / Callout Banner {h_i}**: `{hl.get('text')}` at `left={hr.get('left')}\", top={hr.get('top')}\", width={hr.get('width')}\", height={hr.get('height')}\"` "
-                    f"(bg=`{hs.get('backgroundColor')}`, border=`{hs.get('borderColor')}`, color=`{hs.get('color')}`)"
+                    f"(bg=`{hs.get('backgroundColor')}`, border=`{hs.get('borderColor')}`, color=`{hs.get('color')}`, runs=`{hl.get('runs')}`)"
                 )
 
         if slide_geom.get("footnotes"):
@@ -432,7 +442,7 @@ def format_slide_manifest_markdown(
                 fnr = fn.get("rect", {})
                 fns = fn.get("styles", {})
                 lines.append(
-                    f"- **Footnote {fn_i}**: `{fn.get('text')}` at `left={fnr.get('left')}\", top={fnr.get('top')}\", width={fnr.get('width')}\", height={fnr.get('height')}\"` (`color={fns.get('color')}`)"
+                    f"- **Footnote {fn_i}**: `{fn.get('text')}` at `left={fnr.get('left')}\", top={fnr.get('top')}\", width={fnr.get('width')}\", height={fnr.get('height')}\"` (`color={fns.get('color')}`, `fontSizePt={fns.get('fontSizePt')}`)"
                 )
 
         geom_for_prompt = dict(slide_geom)
@@ -447,7 +457,7 @@ def format_slide_manifest_markdown(
 
         lines.extend([
             "",
-            "### [EXACT MEASURED BROWSER LAYOUT GEOMETRY (PIXEL-PERFECT INCHES)]",
+            f"{chr(35)}{chr(35)}{chr(35)} [EXACT MEASURED BROWSER LAYOUT GEOMETRY (PIXEL-PERFECT INCHES)]",
             "```json",
             json.dumps(geom_for_prompt, ensure_ascii=False, indent=2),
             "```",
@@ -457,7 +467,7 @@ def format_slide_manifest_markdown(
         raw_html_snippet = slide_dom["raw_html"][:6000]
         lines.extend([
             "",
-            "### [SLIDE ORIGINAL HTML SOURCE]",
+            f"{chr(35)}{chr(35)}{chr(35)} [SLIDE ORIGINAL HTML SOURCE]",
             "```html",
             raw_html_snippet,
             "```",
@@ -537,13 +547,13 @@ def prepare_html_for_host_ai(
         )
 
     manifest_sections = [
-        "# [AUTHENTIC SLIDE STRUCTURE & STYLE MANIFEST]",
+        f"{chr(35)} [AUTHENTIC SLIDE STRUCTURE & STYLE MANIFEST]",
         "",
-        "## [STRICT INSTRUCTIONS FOR THE SLIDE BUILDER AI]",
-        "1. **Visual & Coordinate Grounding**: Inspect each slide's rendered 16:9 PNG screenshot (`slide-<N>.png`) alongside its `[EXACT MEASURED BROWSER LAYOUT GEOMETRY]` below. Use the exact `left`, `top`, `width`, `height` inch coordinates (`Inches(...)`) from the measured browser geometry so there are zero overlaps and zero layout shifts.",
-        "2. **Exact Colors & Typography**: Preserve 100% of the exact RGB/HEX colors (`color`, `backgroundColor`, `borderColor`, `topAccentColor`, `leftAccentColor`, colored text `runs`) and Korean/English text strings. Do not substitute generic grey or default blue when the DOM specifies an explicit color.",
-        "3. **Processes, Flows, and Sub-Cards**: Render every `pipelineSteps` item, `flows` container/node/arrow, `fItems` icon/text row, and `subCards` box as native PowerPoint `ROUNDED_RECTANGLE` shapes and textboxes at their exact measured coordinates.",
-        "4. **Native Charts & Tables**: Always use `build_styled_native_chart(slide, ch, ...)` for `charts_data` and `build_styled_native_table(slide, tbl, ...)` for `table_data`. You can also call `build_slide_from_geometry(slide, slide_geometry)` as a base and customize or build each slide directly in `def build_slide_<N>(prs, slide):`.",
+        f"{chr(35)}{chr(35)} [STRICT INSTRUCTIONS FOR THE SLIDE BUILDER AI]",
+        "1. **Visual & Coordinate Grounding**: Inspect each slide's rendered 16:9 PNG screenshot (`slide-<N>.png`) alongside its `[EXACT MEASURED BROWSER LAYOUT GEOMETRY]` below. Use the exact `left`, `top`, `width`, `height` inch coordinates (`Inches(...)`) and measured `fontSizePt` from the browser geometry so there are zero overlaps, zero layout shifts, and 100% consistent header/footer typography across all slides.",
+        "2. **Exact Colors, Gradients, Shadows, & Inline Highlights**: Preserve 100% of the exact RGB/HEX colors (`color`, `backgroundColor`, `borderColor`, `topAccentColor`, `leftAccentColor`, colored text `runs`). Use `apply_linear_gradient_fill(shape, grad_info)` for CSS linear-gradient bars/cards (never split gradients into multiple solid rectangles), `apply_drop_shadow(shape)` for `hasShadow: true` cards, and `apply_run_highlight(run, rgb_color)` or `render_rich_runs_into_text_frame(tf, runs, ...)` for inline `<code>` (`Consolas` + `#eef0f5` highlight) and inline `.score`/`.tag` badges.",
+        "3. **Processes, Flows, Sub-Cards, & Vector SVGs**: Render every `pipelineSteps` item, `flows` container/node/arrow, `fItems` icon/text row, `subCards` box, and `decorShapes` item as native PowerPoint shapes at their exact measured coordinates. Pure geometric `<svg>` illustrations (`svgPrimitives`) are automatically rendered as native editable vector shapes by `build_svg_primitives` / `embed_extracted_slide_images`.",
+        "4. **Native Charts & Tables**: Always use `build_styled_native_chart(slide, ch, ...)` for `charts_data` and `build_styled_native_table(slide, tbl, ...)` for `table_data`. Calling `build_slide_from_geometry(slide, slide_geometry)` automatically renders all tables (with `colRatios`, rounded card wrapper, drop shadow, partial `<b>` bolding, `.sub` lines, `<code>` highlights, and inline `.score`/`.tag` badges), charts, cards, gradients, and vector SVGs.",
         "5. **16:9 Canvas**: Assume `prs.slide_width = Inches(13.333333)` and `prs.slide_height = Inches(7.5)`.",
         "",
     ]
