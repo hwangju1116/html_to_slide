@@ -11,7 +11,7 @@ description: >-
 
 # HTML-to-PPTX Native Presentation Converter Skill
 
-Converts HTML slide decks (and slide images via the Host Agent's vision) into **100% editable native 16:9 PowerPoint (`.pptx`)** presentations locally. All cards, badges, text frames, tables, and Chart.js canvases are built directly from live DOM geometry as native PowerPoint shapes, tables, and charts—requiring **no screen captures, no MCP server, no Cloud Run deployment, and no GCP project configuration**.
+Converts HTML slide decks (and slide images via the Host Agent's vision) into **100% editable native 16:9 PowerPoint (`.pptx`)** presentations locally. All cards, badges, text frames, tables, and Chart.js canvases are built directly from live DOM geometry as native PowerPoint shapes, tables, and charts—requiring **no MCP server, no Cloud Run deployment, and no GCP project configuration**.
 
 ## Directory Structure
 
@@ -19,14 +19,14 @@ Converts HTML slide decks (and slide images via the Host Agent's vision) into **
 html-to-pptx/
 ├── SKILL.md                                  # Core workflow instructions (this file)
 ├── scripts/
-│   ├── convert_html_to_pptx.py               # CLI: HTML -> Native editable 16:9 .pptx
-│   ├── browser_renderer.py                   # Headless Chrome 1920x1080 CDP live DOM geometry engine
+│   ├── convert_html_to_pptx.py               # CLI: HTML -> Native editable 16:9 .pptx (with --prepare & --builder-script)
+│   ├── browser_renderer.py                   # Headless Chrome 1920x1080 CDP live DOM geometry & screenshot engine
 │   ├── js_geometry_extractor.py              # Live DOM bounding-box & computed-style extractor
 │   ├── pptx_native_builders.py               # Native python-pptx shape/table/chart builders & collision resolver
 │   └── color_utils.py                        # CSS variable & RGBA alpha-blending parser
 ├── references/
 │   ├── html_slide_authoring_guide.md         # 16:9 HTML/CSS semantic rules for image-to-slide digitization
-│   └── cli_and_architecture.md               # Detailed CLI options, custom builder hook, and troubleshooting
+│   └── cli_and_architecture.md               # Detailed CLI options, Host AI custom builder hook, and troubleshooting
 └── assets/
     ├── fonts/                                # Bundled NotoSansKR fallback fonts
     ├── chart.min.js                          # Offline Chart.js bundle
@@ -39,12 +39,14 @@ html-to-pptx/
 
 Determine the user's input type and execute the matching workflow using `<SKILL_DIR>` (the directory containing this `SKILL.md`):
 
-1. **Input is an `.html` file (or raw HTML slide code) → Convert to `.pptx`**: Follow **Workflow A**.
+1. **Input is an `.html` file (or raw HTML slide code) → Convert to `.pptx`**:
+   - **Standard Fast Conversion (Default)**: Follow **Workflow A-1** to convert directly via live DOM geometry (`build_slide_from_geometry`).
+   - **Host AI Vision + Custom Builder Conversion (For bespoke/complex layouts)**: Follow **Workflow A-2** (`--prepare` + `--builder-script`).
 2. **Input is a slide image (`.png`, `.jpg`, `.webp`) → Convert to editable `.pptx` / `.html`**: Follow **Workflow B**.
 
 ---
 
-### Workflow A: Direct HTML → Native Editable PPTX Conversion
+### Workflow A-1: Direct HTML → Native Editable PPTX Conversion
 
 1. If the user provided raw HTML in chat rather than a file path, save it to a `.html` file in the workspace first.
 2. Run [`scripts/convert_html_to_pptx.py`](scripts/convert_html_to_pptx.py):
@@ -53,8 +55,27 @@ Determine the user's input type and execute the matching workflow using `<SKILL_
    ```
    *(Note: If `<SKILL_DIR>/.venv/bin/python` exists, prefer using `"<SKILL_DIR>/.venv/bin/python"`.)*
    - To convert only a specific slide, append `-s <slide_number_or_id>` (e.g., `-s 2` or `-s slide-3`).
-   - For advanced CLI flags (`--builder-script`, `--scale`), consult [`references/cli_and_architecture.md`](references/cli_and_architecture.md).
 3. Verify that the JSON output reports `"status": "success"` and report the generated `output_pptx_path` and `slide_count` to the user.
+
+---
+
+### Workflow A-2: Host AI Vision + DOM Manifest Custom Builder (`--prepare` + `--builder-script`)
+
+When a deck requires bespoke `python-pptx` layout synthesis guided by visual inspection (replacing the old server-side `vision_fallback_builder.py` using the Host Agent's own multimodal AI):
+
+1. **Prepare 16:9 Screenshots & DOM Style Manifest**:
+   ```bash
+   python "<SKILL_DIR>/scripts/convert_html_to_pptx.py" "<input.html>" --prepare "<work_dir>" --json
+   ```
+2. **Inspect Screenshots & Manifest**:
+   - Read `<work_dir>/manifest.md` (which contains `[AUTHENTIC SLIDE STRUCTURE & STYLE MANIFEST]` with exact inch coordinates, RGB/HEX colors, and table/card schemas) and call `view_file` on `<work_dir>/slide-1.png`, etc.
+3. **Write Custom Builder Script (`<work_dir>/builder.py`)**:
+   - Define `def build_slide_1(prs, slide): ...`, `def build_slide_2(prs, slide): ...` (or `def build_slide(prs, slide, slide_index): ...`).
+   - Use injected helpers `build_styled_native_table`, `build_styled_native_chart`, `apply_semantic_styles_to_table`, `build_slide_from_geometry`, `slide_geometry`, `table_data`, `Inches`, `Pt`, `RGBColor`, `MSO_SHAPE`, `PP_ALIGN`, `MSO_ANCHOR`.
+4. **Compile Final PPTX**:
+   ```bash
+   python "<SKILL_DIR>/scripts/convert_html_to_pptx.py" "<input.html>" -o "<output.pptx>" --builder-script "<work_dir>/builder.py" --json
+   ```
 
 ---
 

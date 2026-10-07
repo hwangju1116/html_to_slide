@@ -345,7 +345,6 @@ def _prepare_slide_html(
         transition-delay: 0s !important;
     }}
 
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     html, body {{
         width: 1920px !important;
         height: 1080px !important;
@@ -430,6 +429,7 @@ async def _extract_slides_cdp(
     slide_items: List[Any],
     port: int,
     scale_factor: int = 2,
+    capture_all_screenshots: bool = False,
 ) -> tuple[List[Optional[Dict[str, Any]]], List[Optional[bytes]]]:
   extracted_geometries: List[Optional[Dict[str, Any]]] = []
   extracted_image_buffers: List[Optional[bytes]] = []
@@ -549,7 +549,7 @@ async def _extract_slides_cdp(
       extracted_geometries.append(geom)
 
       img_bytes = None
-      if geom and geom.get("images"):
+      if capture_all_screenshots or (geom and geom.get("images")):
         res = await send_recv("Page.captureScreenshot", {"format": "png"})
         if "data" in res:
           img_bytes = base64.b64decode(res["data"])
@@ -600,6 +600,8 @@ def extract_html_slides_geometry(
     base_dir: Optional[str] = None,
     scale_factor: int = 2,
     chrome_binary: Optional[str] = None,
+    capture_all_screenshots: bool = False,
+    screenshot_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
   if os.path.isfile(html_input):
     html_path = os.path.abspath(html_input)
@@ -636,6 +638,7 @@ def extract_html_slides_geometry(
 
   total_slides = len(target_tuples)
   slide_ids = [t[1] for t in target_tuples]
+  need_all_shots = capture_all_screenshots or bool(screenshot_dir)
 
   with tempfile.TemporaryDirectory() as tmpdir:
     temp_slide_files = []
@@ -676,6 +679,7 @@ def extract_html_slides_geometry(
           temp_slide_files,
           port,
           scale_factor=scale_factor,
+          capture_all_screenshots=need_all_shots,
       )
     finally:
       try:
@@ -688,12 +692,24 @@ def extract_html_slides_geometry(
           pass
       time.sleep(0.2)
 
+  saved_screenshot_paths: List[str] = []
+  if screenshot_dir:
+    os.makedirs(screenshot_dir, exist_ok=True)
+    for sid, buf in zip(slide_ids, extracted_image_buffers):
+      if buf:
+        out_png = os.path.abspath(os.path.join(screenshot_dir, f"{sid}.png"))
+        with open(out_png, "wb") as f_png:
+          f_png.write(buf)
+        saved_screenshot_paths.append(out_png)
+
   return {
       "success": True,
       "slide_count": total_slides,
       "slide_ids": slide_ids,
       "slide_geometries": extracted_geometries,
       "slide_image_buffers": extracted_image_buffers,
+      "screenshot_paths": saved_screenshot_paths,
   }
+
 
 

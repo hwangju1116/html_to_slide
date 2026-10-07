@@ -230,6 +230,168 @@ def parse_slide_semantic_data(slide_elem, css_vars_raw: Dict[str, str]) -> Dict[
     }
 
 
+def format_slide_manifest_markdown(
+    slide_idx: int,
+    slide_id: str,
+    screenshot_path: Optional[str],
+    design_tokens: Dict[str, Any],
+    slide_dom: Optional[Dict[str, Any]],
+    slide_geom: Optional[Dict[str, Any]],
+) -> str:
+    lines = [
+        f"## Slide {slide_idx} (`{slide_id}`) — `def build_slide_{slide_idx}(prs, slide):`",
+    ]
+    if screenshot_path:
+        lines.append(f"- **Rendered 16:9 Screenshot**: `{screenshot_path}`")
+    lines.append(f"- **Canvas Background**: `{(slide_geom or {}).get('slideBgColor') or design_tokens.get('bg_color_hex', '#FFFFFF')}`")
+    lines.append(f"- **Brand Color**: `{design_tokens.get('brand_color_hex', '#2563EB')}`")
+    lines.append(f"- **Primary Font**: `{design_tokens.get('font_name', 'Pretendard')}`")
+
+    if slide_geom:
+        if slide_geom.get("title"):
+            t = slide_geom["title"]
+            tr = t.get("rect", {})
+            lines.append(
+                f"- **Title**: `{t.get('text')}` at `left={tr.get('left')}\", top={tr.get('top')}\", width={tr.get('width')}\", height={tr.get('height')}\"` (`fontSizePt={t.get('styles', {}).get('fontSizePt')}`, `color={t.get('styles', {}).get('color')}`)"
+            )
+        if slide_geom.get("sub"):
+            sb = slide_geom["sub"]
+            sbr = sb.get("rect", {})
+            lines.append(
+                f"- **Subtitle**: `{sb.get('text')}` at `left={sbr.get('left')}\", top={sbr.get('top')}\", width={sbr.get('width')}\", height={sbr.get('height')}\"` (`fontSizePt={sb.get('styles', {}).get('fontSizePt')}`, `color={sb.get('styles', {}).get('color')}`)"
+            )
+        if slide_geom.get("tables"):
+            lines.append(f"- **Native Tables ({len(slide_geom['tables'])})**:")
+            for t_i, tbl in enumerate(slide_geom["tables"], 1):
+                tr = tbl.get("rect", {})
+                lines.append(
+                    f"  - Table {t_i}: `{tbl.get('num_rows')}x{tbl.get('num_cols')}` at `left={tr.get('left')}\", top={tr.get('top')}\", width={tr.get('width')}\", height={tr.get('height')}\"` (`inCard={tbl.get('inCard')}`, `cardTitle={tbl.get('cardTitle')}`)"
+                )
+                headers_str = [h["text"] if isinstance(h, dict) else str(h) for h in tbl.get("headers", [])]
+                lines.append(f"    - Headers: `{headers_str}`")
+                for r_i, row in enumerate(tbl.get("rows", []), 1):
+                    r_desc = [f"{c['text']} (color={c.get('color')}, bold={c.get('is_bold')})" for c in row]
+                    lines.append(f"    - Row {r_i}: {' | '.join(r_desc)}")
+        if slide_geom.get("cards"):
+            lines.append(f"- **Cards ({len(slide_geom['cards'])})**:")
+            for c_i, c in enumerate(slide_geom["cards"], 1):
+                cr = c.get("rect", {})
+                lines.append(
+                    f"  - Card {c_i}: title=`{c.get('title')}` at `left={cr.get('left')}\", top={cr.get('top')}\", width={cr.get('width')}\", height={cr.get('height')}\"` (`topAccent={c.get('topAccentColor') if c.get('hasTopAccent') else 'none'}`)"
+                )
+        if slide_geom.get("highlightBoxes"):
+            for h_i, hl in enumerate(slide_geom["highlightBoxes"], 1):
+                hr = hl.get("rect", {})
+                lines.append(
+                    f"- **Highlight Box {h_i}**: `{hl.get('text')}` at `left={hr.get('left')}\", top={hr.get('top')}\", width={hr.get('width')}\", height={hr.get('height')}\"`"
+                )
+    elif slide_dom:
+        lines.append(f"- **Title**: `{slide_dom.get('title')}`")
+        lines.append(f"- **Subtitle**: `{slide_dom.get('subtitle')}`")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def prepare_html_for_host_ai(
+    html_input: str,
+    prepare_dir: str,
+    target_slide_id: Optional[str] = None,
+    base_dir: Optional[str] = None,
+    scale_factor: int = 2,
+    chrome_binary: Optional[str] = None,
+) -> Dict[str, Any]:
+    prepare_dir = os.path.abspath(prepare_dir)
+    os.makedirs(prepare_dir, exist_ok=True)
+
+    if os.path.isfile(html_input):
+        html_path = os.path.abspath(html_input)
+        if not base_dir:
+            base_dir = os.path.dirname(html_path)
+        with open(html_path, "r", encoding="utf-8") as f:
+            raw_html_content = f.read()
+    else:
+        raw_html_content = html_input
+        if not base_dir:
+            base_dir = os.getcwd()
+
+    ext_res = extract_html_slides_geometry(
+        html_input=html_input,
+        target_slide_id=target_slide_id,
+        base_dir=base_dir,
+        scale_factor=scale_factor,
+        chrome_binary=chrome_binary,
+        capture_all_screenshots=True,
+        screenshot_dir=prepare_dir,
+    )
+    slide_geometries = ext_res.get("slide_geometries", [])
+    screenshot_paths = ext_res.get("screenshot_paths", [])
+    slide_ids = ext_res["slide_ids"]
+
+    css_vars_raw = extract_root_css_vars(raw_html_content)
+    tagged_html_content, _ = _tag_slide_ids_in_html(raw_html_content)
+    try:
+        doc = lxml.html.fromstring(tagged_html_content)
+    except Exception:
+        doc = None
+
+    slide_dom_list = []
+    for sid in slide_ids:
+        s_dom = None
+        if doc is not None:
+            nodes = doc.xpath(f"//*[@id='{sid}']")
+            if nodes:
+                s_dom = parse_slide_semantic_data(nodes[0], css_vars_raw)
+        slide_dom_list.append(s_dom)
+
+    global_tokens = extract_global_design_tokens(
+        raw_html=raw_html_content,
+        first_slide_geometry=slide_geometries[0] if slide_geometries else None,
+    )
+
+    geom_json_path = os.path.join(prepare_dir, "geometry.json")
+    with open(geom_json_path, "w", encoding="utf-8") as f_geom:
+        json.dump(
+            {
+                "design_tokens": global_tokens,
+                "slide_ids": slide_ids,
+                "slide_geometries": slide_geometries,
+            },
+            f_geom,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    manifest_sections = [
+        "# [AUTHENTIC SLIDE STRUCTURE & STYLE MANIFEST]",
+        "",
+        "Use the rendered 16:9 PNG screenshots and the exact live DOM geometry below when writing custom `build_slide_<N>(prs, slide)` functions.",
+        "",
+    ]
+    for idx, sid in enumerate(slide_ids):
+        shot_p = screenshot_paths[idx] if idx < len(screenshot_paths) else None
+        s_dom = slide_dom_list[idx] if idx < len(slide_dom_list) else None
+        s_geom = slide_geometries[idx] if idx < len(slide_geometries) else None
+        manifest_sections.append(
+            format_slide_manifest_markdown(idx + 1, sid, shot_p, global_tokens, s_dom, s_geom)
+        )
+
+    manifest_path = os.path.join(prepare_dir, "manifest.md")
+    with open(manifest_path, "w", encoding="utf-8") as f_man:
+        f_man.write("\n".join(manifest_sections))
+
+    return {
+        "status": "prepared",
+        "success": True,
+        "slide_count": len(slide_ids),
+        "slide_ids": slide_ids,
+        "prepare_dir": prepare_dir,
+        "screenshot_paths": screenshot_paths,
+        "manifest_path": manifest_path,
+        "geometry_json_path": geom_json_path,
+    }
+
+
 def convert_html_to_pptx(
     html_input: str,
     output_pptx_path: Optional[str] = None,
@@ -303,6 +465,7 @@ def convert_html_to_pptx(
             design_tokens=global_tokens,
             slide_dom_data=slide_dom_list[idx],
             slide_geometry=slide_geometries[idx] if idx < len(slide_geometries) else None,
+            slide_index=idx + 1,
         )
 
     harmonize_deck_presentation_fidelity(
@@ -353,8 +516,13 @@ def main() -> None:
         help="Device scale factor for Chromium rendering (default: 2 for Retina).",
     )
     parser.add_argument(
+        "--prepare",
+        dest="prepare_dir",
+        help="Render 16:9 PNG screenshots and generate manifest.md + geometry.json in the specified directory for Host AI Vision code generation.",
+    )
+    parser.add_argument(
         "--builder-script",
-        help="Optional path to a custom Python script defining `build_slide(slide, prs)` generated by the Host AI.",
+        help="Optional path to a custom Python script defining `build_slide(prs, slide)` or `build_slide_<N>(prs, slide)` generated by the Host AI.",
     )
     parser.add_argument(
         "--json",
@@ -363,6 +531,21 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    if args.prepare_dir:
+        prep_res = prepare_html_for_host_ai(
+            html_input=args.input_html,
+            prepare_dir=args.prepare_dir,
+            target_slide_id=args.target_slide_id,
+            scale_factor=args.scale,
+        )
+        if args.json:
+            print(json.dumps(prep_res, ensure_ascii=False, indent=2))
+        else:
+            print(f"[PREPARED] {prep_res['slide_count']} slide(s) in {prep_res['prepare_dir']}")
+            print(f"Manifest: {prep_res['manifest_path']}")
+        return
+
     custom_code = None
     if args.builder_script and os.path.isfile(args.builder_script):
         with open(args.builder_script, "r", encoding="utf-8") as f_code:

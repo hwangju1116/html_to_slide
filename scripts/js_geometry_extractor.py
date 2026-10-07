@@ -20,6 +20,15 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
         s.style.opacity = '1';
         s.style.visibility = 'visible';
         s.style.display = 'flex';
+        const sCs = window.getComputedStyle(s);
+        const hasHiddenChild = Array.from(s.children).some(ch => window.getComputedStyle(ch).display === 'none');
+        if (sCs.display === 'flex' && sCs.flexDirection === 'column' && sCs.justifyContent === 'space-between' && hasHiddenChild) {
+            const hasCover = !!s.querySelector('.cover-slide-content');
+            if (!hasCover) {
+                s.style.justifyContent = 'flex-start';
+                s.style.gap = '18px';
+            }
+        }
     } catch (e) {}
 
     try {
@@ -72,11 +81,12 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
         if (!el) return null;
         const cs = window.getComputedStyle(el);
         const pxSize = parseFloat(cs.fontSize) || 16;
-        const scaledPt = Number(Math.max(8.5, Math.min(44, pxSize * 0.56)).toFixed(1));
+        const scaledPt = Number(Math.max(8.5, Math.min(44, pxSize * 0.54)).toFixed(1));
         const br = parseFloat(cs.borderRadius) || parseFloat(cs.borderTopLeftRadius) || 0;
         const bw = parseFloat(cs.borderWidth) || parseFloat(cs.borderBottomWidth) || parseFloat(cs.borderLeftWidth) || 0;
         const btw = parseFloat(cs.borderTopWidth) || 0;
         const blw = parseFloat(cs.borderLeftWidth) || 0;
+        const bbw = parseFloat(cs.borderBottomWidth) || 0;
         let color = cs.color;
         if ((color === 'rgba(0, 0, 0, 0)' || color === 'transparent') && cs.backgroundImage && cs.backgroundImage !== 'none') {
             const m = cs.backgroundImage.match(/rgba?\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+(?:\\s*,\\s*[\\d.]+)?\\s*\\)|#[0-9a-fA-F]{3,8}/);
@@ -94,6 +104,8 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
             borderTopWidth: btw,
             borderLeftColor: cs.borderLeftColor,
             borderLeftWidth: blw,
+            borderBottomColor: cs.borderBottomColor,
+            borderBottomWidth: bbw,
             borderColor: bw > 0 ? (cs.borderColor || cs.borderBottomColor || cs.borderLeftColor) : null,
             borderWidth: bw,
             textAlign: cs.textAlign,
@@ -141,6 +153,18 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
     }
     const slideBg = `rgb(${bgRgb.r}, ${bgRgb.g}, ${bgRgb.b})`;
 
+    let headerDividerTop = null;
+    let headerDividerColor = null;
+    const slideHeaderEl = s.querySelector('.slide-header, .slide-head');
+    if (slideHeaderEl) {
+        const shCs = window.getComputedStyle(slideHeaderEl);
+        if ((parseFloat(shCs.borderBottomWidth) || 0) >= 1) {
+            const shRectIn = toIn(slideHeaderEl.getBoundingClientRect());
+            headerDividerTop = Number((shRectIn.top + shRectIn.height).toFixed(3));
+            headerDividerColor = shCs.borderBottomColor;
+        }
+    }
+
     const headings = Array.from(s.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(el => {
         if (el.closest('header') || el.closest('footer') || el.closest('.foot')) return false;
         const cs = window.getComputedStyle(el);
@@ -160,12 +184,36 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
         if (prominent.length > 0) mainH = prominent[0];
     }
 
+    let titleRuns = [];
+    if (mainH && mainH.children.length > 0) {
+        const mColor = getStyles(mainH).color;
+        let hasColoredChild = false;
+        mainH.querySelectorAll('span, b, strong, em').forEach(ch => {
+            if (getStyles(ch).color !== mColor) hasColoredChild = true;
+        });
+        if (hasColoredChild) {
+            mainH.childNodes.forEach(node => {
+                if (node.nodeType === 3) {
+                    const t = node.textContent;
+                    if (t) titleRuns.push({ text: t, color: mColor });
+                } else if (node.nodeType === 1) {
+                    if (node.tagName.toLowerCase() === 'br') {
+                        titleRuns.push({ text: '\\n', color: mColor });
+                    } else {
+                        const t = node.innerText || node.textContent || '';
+                        if (t) titleRuns.push({ text: t, color: getStyles(node).color });
+                    }
+                }
+            });
+        }
+    }
+
     let subDesc = Array.from(s.querySelectorAll('p.subtitle, p.premise, p.lead, p.cover-subtitle, h2.subtitle, [class*="subtitle"], [class*="premise"], p.text-slate-400')).find(el => {
         if (!mainH) return true;
         if (el === mainH || mainH.contains(el) || el.contains(mainH)) return false;
         if (el.closest('.glass-card, .card, .panel, .info-card, .timeline, .pipe, .steps, .pcol, table')) return false;
         const rIn = toIn(el.getBoundingClientRect());
-        if (rIn.top > 3.2) return false;
+        if (rIn.top > 4.2) return false;
         return el.innerText.trim().length > 0;
     }) || null;
     if (!subDesc && mainH) {
@@ -174,11 +222,13 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
         if (cand && cand !== mainH && cand.tagName.toLowerCase() === 'p') {
             const rIn = toIn(cand.getBoundingClientRect());
             const txt = cand.innerText ? cand.innerText.trim() : '';
-            if (txt && rIn.top <= 2.8 && !txt.startsWith('※') && !txt.startsWith('*') && !txt.startsWith('출처')) {
+            if (txt && rIn.top <= 3.2 && !txt.startsWith('※') && !txt.startsWith('*') && !txt.startsWith('출처')) {
                 subDesc = cand;
             }
         }
     }
+
+    const num = s.querySelector('.slide-number, [class*="slide-counter"], [class*="foot__n"]');
 
     const headerBadges = [];
     const headerBadgeEls = [];
@@ -186,7 +236,8 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
     const mainHTopIn = mainH ? toIn(mainH.getBoundingClientRect()).top : 1.0;
     const maxBadgeTopIn = Math.max(1.45, mainHTopIn + 0.05);
     const addHeaderBadge = (el) => {
-        if (!el || el === mainH || el === subDesc) return;
+        if (!el || el === mainH || el === subDesc || el === num) return;
+        if (num && (num.contains(el) || el.contains(num))) return;
         if (mainH && (mainH.contains(el) || el.contains(mainH))) return;
         if (subDesc && (subDesc.contains(el) || el.contains(subDesc))) return;
         if (el.closest('.glass-card, .card, .panel, .info-card, table')) return;
@@ -220,8 +271,6 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
             addHeaderBadge(el);
         }
     });
-
-    const num = s.querySelector('.slide-number, [class*="slide-counter"], [class*="foot__n"]');
 
     const images = [];
     s.querySelectorAll('svg, img').forEach(el => {
@@ -290,33 +339,79 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
     const hlBoxes = [];
     const hlBoxEls = [];
     const seenHl = new Set();
-    s.querySelectorAll('.foot__pocket, .highlight-box, .banner, [class*="highlight-box"], [class*="callout"]').forEach(hl => {
-        const txt = hl.innerText ? hl.innerText.trim().replace(/\\s*\\n\\s*/g, ' ') : '';
+    const rawHlCandidates = Array.from(s.querySelectorAll('.foot__pocket, .highlight-box, .banner, [class*="highlight-box"], [class*="callout"]'));
+    const topHlCandidates = rawHlCandidates.filter(hl => !rawHlCandidates.some(p => p !== hl && p.contains(hl)));
+    topHlCandidates.forEach(hl => {
+        const subBadgeEl = hl.querySelector('.banner-sub, [class*="banner-sub"], .badge');
+        let subBadge = null;
+        if (subBadgeEl && !subBadgeEl.closest('p, li')) {
+            subBadge = {
+                text: subBadgeEl.innerText.trim(),
+                rect: toIn(subBadgeEl.getBoundingClientRect()),
+                styles: getStyles(subBadgeEl)
+            };
+        }
+        const mainTextEl = hl.querySelector('.banner-text, [class*="banner-text"]') || hl;
+        let txt = hl.innerText ? hl.innerText.trim() : '';
+        if (subBadge && subBadge.text && txt.endsWith(subBadge.text)) {
+            txt = txt.slice(0, txt.length - subBadge.text.length).trim();
+        }
+        txt = txt.replace(/\\s*\\n\\s*/g, ' ');
         if (!txt || seenHl.has(txt)) return;
         seenHl.add(txt);
         hlBoxEls.push(hl);
+
+        const hlParas = [];
+        hl.querySelectorAll('p').forEach(pEl => {
+            const pTxt = pEl.innerText ? pEl.innerText.trim().replace(/\\s*\\n\\s*/g, ' ') : '';
+            if (pTxt) {
+                hlParas.push({
+                    text: pTxt,
+                    styles: getStyles(pEl)
+                });
+            }
+        });
+
+        const hlSt = getStyles(hl);
         hlBoxes.push({
             rect: toIn(hl.getBoundingClientRect()),
-            styles: getStyles(hl),
-            text: txt
+            styles: hlSt,
+            textStyles: getStyles(mainTextEl),
+            text: txt,
+            paragraphs: hlParas,
+            hasLeftAccent: hlSt.borderLeftWidth >= 3,
+            leftAccentColor: hlSt.borderLeftColor,
+            subBadge: subBadge
         });
     });
     if (hlBoxes.length === 0) {
         s.querySelectorAll('*').forEach(hl => {
             if (hl.closest('table') || hl.querySelector('table')) return;
+            if (hl.closest('.slide-header, .slide-head, header, footer, .foot, .controls-footer')) return;
+            if (hl.querySelector('.slide-header, .slide-head, h1, h2')) return;
+            if (hl === mainH || hl === subDesc || hl === num) return;
+            if (headerBadgeEls.some(hb => hb === hl || hb.contains(hl) || hl.contains(hb))) return;
             if (hl.querySelector('.foot__pocket, .banner, [class*="highlight-box"], [class*="callout"]')) return;
+            const rIn = toIn(hl.getBoundingClientRect());
+            if (rIn.top < 1.8) return;
             const txt = hl.innerText ? hl.innerText.trim().replace(/\\s*\\n\\s*/g, ' ') : '';
             if (!txt || seenHl.has(txt)) return;
             const isCallout = txt.startsWith('💡') || txt.startsWith('📌') || txt.startsWith('★') || 
                               txt.startsWith('⚠️') || txt.startsWith('ℹ️') || txt.includes('핵심 메시지') ||
-                              txt.includes('핵심 요약') || txt.includes('참고') || txt.includes('결론');
+                              txt.includes('참고') || txt.includes('결론');
             if (isCallout && hl.offsetHeight < 320 && hl.offsetWidth > 150) {
                 seenHl.add(txt);
                 hlBoxEls.push(hl);
+                const hlSt = getStyles(hl);
                 hlBoxes.push({
-                    rect: toIn(hl.getBoundingClientRect()),
-                    styles: getStyles(hl),
-                    text: txt
+                    rect: rIn,
+                    styles: hlSt,
+                    textStyles: hlSt,
+                    text: txt,
+                    paragraphs: [],
+                    hasLeftAccent: hlSt.borderLeftWidth >= 3,
+                    leftAccentColor: hlSt.borderLeftColor,
+                    subBadge: null
                 });
             }
         });
@@ -336,9 +431,9 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
 
     const isTopContainer = (el) => {
         if (el === s || el.contains(s) || el.querySelector('table') || el.closest('table')) return false;
-        if (el.closest('.slide-head') || el.closest('header') || el.closest('.foot') || el.closest('footer')) return false;
+        if (el.closest('.slide-head') || el.closest('.slide-header') || el.closest('header') || el.closest('.foot') || el.closest('footer')) return false;
         if (headerBadgeEls.some(hb => hb === el || hb.contains(el) || el.contains(hb))) return false;
-        if (hlBoxEls.some(hb => hb === el || hb.contains(el) || el.contains(hb))) return false;
+        if (hlBoxEls.some(hb => hb === el || hb.contains(el))) return false;
         if (num && (el === num || num.contains(el) || el.contains(num))) return false;
         if (mainH && (el === mainH || el.contains(mainH))) return false;
         if (subDesc && (el === subDesc || el.contains(subDesc))) return false;
@@ -408,9 +503,99 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
             };
         }
 
+        const rawPipeSteps = Array.from(c.querySelectorAll('.ma-pipe-step, .pipeline-step, [class*="pipe-step"], [class*="pipeline-step"], [class*="step-item"]')).filter(stEl => {
+            const cls = typeof stEl.className === 'string' ? stEl.className : '';
+            return !/\\b(pipe-step|pipeline-step|step-item)[-_]{1,2}(title|desc|num|icon|body|text|content)\\b/.test(cls);
+        });
+        const pipeStepEls = rawPipeSteps.filter(stEl => !rawPipeSteps.some(p => p !== stEl && p.contains(stEl)));
+        const pipeSteps = pipeStepEls.map(stEl => {
+            const numEl = stEl.querySelector('.pipeline-step-num, [class*="step-num"]');
+            const h = stEl.querySelector('h3, h4, h5, [class*="title"], strong');
+            const p = stEl.querySelector('p, span:last-child');
+            return {
+                rect: toIn(stEl.getBoundingClientRect()),
+                styles: getStyles(stEl),
+                stepNum: numEl ? numEl.innerText.trim() : (stEl.getAttribute('data-step') || ''),
+                numRect: numEl ? toIn(numEl.getBoundingClientRect()) : null,
+                numStyles: numEl ? getStyles(numEl) : null,
+                title: h ? h.innerText.trim() : '',
+                titleRect: h ? toIn(h.getBoundingClientRect()) : null,
+                titleStyles: h ? getStyles(h) : null,
+                desc: p && p !== h ? p.innerText.trim() : '',
+                descRect: p && p !== h ? toIn(p.getBoundingClientRect()) : null,
+                descStyles: p && p !== h ? getStyles(p) : null
+            };
+        });
+
+        const rawFlows = Array.from(c.querySelectorAll('.flow, [class*="flow"]')).filter(fl => {
+            const cls = typeof fl.className === 'string' ? fl.className : '';
+            if (cls.includes('pipeline-flow')) return false;
+            return !/\\bflow[-_]{1,2}(node|arrow|label|title|desc|text)\\b/.test(cls);
+        });
+        const flowEls = rawFlows.filter(fl => !rawFlows.some(p => p !== fl && p.contains(fl)));
+        const flows = flowEls.map(fl => {
+            const rawNodes = Array.from(fl.querySelectorAll('.flow__node, [class*="node"]'));
+            const topNodes = rawNodes.filter(n => !rawNodes.some(p => p !== n && p.contains(n)));
+            const nodes = topNodes.map(n => ({
+                text: n.innerText.trim(),
+                rect: toIn(n.getBoundingClientRect()),
+                styles: getStyles(n)
+            }));
+            const arrowEl = fl.querySelector('.flow__arrow, [class*="arrow"]');
+            return {
+                rect: toIn(fl.getBoundingClientRect()),
+                nodes: nodes,
+                arrow: arrowEl ? arrowEl.innerText.trim() : '→'
+            };
+        }).filter(f => f.nodes.length > 0);
+
+        const rawFItems = Array.from(c.querySelectorAll('.f-item, [class*="f-item"]')).filter(fi => {
+            if (fi === c) return false;
+            const cls = typeof fi.className === 'string' ? fi.className : '';
+            if (/\\bf-item[-_]{1,2}(title|desc|icon|body|text|content)\\b/.test(cls)) return false;
+            return true;
+        });
+        const fItemEls = rawFItems.filter(fi => !rawFItems.some(p => p !== fi && p.contains(fi)));
+        const fItems = fItemEls.map(fi => {
+            const ic = fi.querySelector('.f-item__icon, .icon, [class*="icon"]');
+            const tEl = fi.querySelector('.f-item-title, .f-item__title, h4, h5');
+            const dEl = fi.querySelector('.f-item-desc, .f-item__desc, p');
+            const tx = fi.querySelector('div:last-child, span:last-child, p');
+            const titleTxt = tEl ? tEl.innerText.trim() : '';
+            const descTxt = dEl && dEl !== tEl ? dEl.innerText.trim() : '';
+            let fullTxt = '';
+            if (titleTxt && descTxt) {
+                fullTxt = titleTxt + '\\n' + descTxt;
+            } else if (tx && tx !== ic) {
+                fullTxt = tx.innerText.trim();
+            } else {
+                fullTxt = fi.innerText.replace(ic ? ic.innerText : '', '').trim();
+            }
+            const textAnchorEl = tEl || (tx && tx !== ic ? tx : fi);
+            return {
+                rect: toIn(fi.getBoundingClientRect()),
+                styles: getStyles(fi),
+                icon: ic ? ic.innerText.trim() : '',
+                iconRect: ic ? toIn(ic.getBoundingClientRect()) : null,
+                iconStyles: ic ? getStyles(ic) : null,
+                title: titleTxt,
+                titleStyles: tEl ? getStyles(tEl) : null,
+                desc: descTxt,
+                descStyles: dEl ? getStyles(dEl) : null,
+                text: fullTxt,
+                textRect: toIn(textAnchorEl.getBoundingClientRect()),
+                textStyles: getStyles(dEl || tEl || textAnchorEl)
+            };
+        });
+
         const rawSubCardCandidates = Array.from(c.querySelectorAll('div')).filter(sc => {
             if (sc === c || sc.querySelector('canvas, table, svg')) return false;
+            if (fItemEls.some(fi => fi === sc || fi.contains(sc) || sc.contains(fi))) return false;
+            if (pipeStepEls.some(ps => ps === sc || ps.contains(sc) || sc.contains(ps))) return false;
+            if (flowEls.some(fl => fl === sc || fl.contains(sc) || sc.contains(fl))) return false;
+            if (hlBoxEls.some(hb => hb === sc || hb.contains(sc) || sc.contains(hb))) return false;
             const scCls = typeof sc.className === 'string' ? sc.className : '';
+            if (/\\b(badge|tag|pill|icon)\\b/.test(scCls) && !scCls.includes('card') && !scCls.includes('box')) return false;
             const isExplicitSub = /\\b(sub-card|serving-box|oss-card|template-box)\\b/.test(scCls) || scCls.includes('sub-card');
             if (isExplicitSub) return true;
             const scCs = window.getComputedStyle(sc);
@@ -426,18 +611,42 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
         const subCardEls = rawSubCardCandidates.filter(sc => !rawSubCardCandidates.some(p => p !== sc && p.contains(sc)));
 
         const subCards = subCardEls.map(sc => {
-            const scBadge = sc.querySelector('.badge, [class*="badge"]');
-            let scHead = sc.querySelector('.sub-card__head, h4, h5, [class*="font-bold"], b, strong');
+            const scBadge = Array.from(sc.querySelectorAll('.badge, [class*="badge"]')).find(b => {
+                const parentP = b.closest('p, li');
+                return !parentP || parentP.innerText.trim() === b.innerText.trim();
+            }) || null;
+            let scHead = sc.querySelector('.sub-card__head, h3, h4, h5, [class*="font-bold"], [class*="head"], [class*="title"]');
+            const scFullTxt = sc.innerText ? sc.innerText.trim() : '';
+            if (!scHead && sc.firstElementChild) {
+                const fc = sc.firstElementChild;
+                const fcCs = window.getComputedStyle(fc);
+                const fcTxt = fc.innerText ? fc.innerText.trim() : '';
+                if (parseInt(fcCs.fontWeight) >= 600 && fcTxt && fcTxt.length <= 60 && scFullTxt.startsWith(fcTxt) && scFullTxt !== fcTxt && (fcCs.display !== 'inline' || sc.children.length >= 2)) {
+                    scHead = fc;
+                }
+            }
+            if (!scHead) {
+                const bCand = sc.querySelector('b, strong');
+                if (bCand) {
+                    const bTxt = bCand.innerText ? bCand.innerText.trim() : '';
+                    const pWrap = bCand.closest('p, li, div');
+                    if (bTxt && scFullTxt.startsWith(bTxt) && (!pWrap || pWrap.innerText.trim() === bTxt)) {
+                        scHead = bCand;
+                    }
+                }
+            }
             const headTxt = scHead ? scHead.innerText.replace(scBadge ? scBadge.innerText : '', '').trim() : '';
             const headStyles = scHead ? getStyles(scHead) : getStyles(sc);
             const scList = [];
+            const scListStyles = [];
             sc.querySelectorAll('li, p, div').forEach(el => {
                 if (el === scHead || (scHead && (scHead.contains(el) || el.contains(scHead)))) return;
-                if (scBadge && (el === scBadge || scBadge.contains(el) || el.contains(scBadge))) return;
+                if (scBadge && (el === scBadge || scBadge.contains(el))) return;
                 if (el.querySelector('li, p, div')) return;
                 const t = el.innerText ? el.innerText.trim() : '';
                 if (t && t !== headTxt && !scList.includes(t)) {
                     scList.push(t);
+                    scListStyles.push(getStyles(el));
                 }
             });
             if (scList.length === 0) {
@@ -445,24 +654,43 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
                 if (headTxt && remTxt.startsWith(headTxt)) {
                     remTxt = remTxt.slice(headTxt.length).trim();
                 }
-                if (remTxt) scList.push(remTxt);
+                if (remTxt) {
+                    scList.push(remTxt);
+                    scListStyles.push(getStyles(sc));
+                }
             }
+            const scSt = getStyles(sc);
             return {
                 rect: toIn(sc.getBoundingClientRect()),
-                styles: getStyles(sc),
+                styles: scSt,
+                hasLeftAccent: scSt.borderLeftWidth >= 3,
+                leftAccentColor: scSt.borderLeftColor,
                 head: headTxt,
                 headStyles: headStyles,
                 badge: scBadge ? scBadge.innerText.trim() : '',
-                items: scList
+                items: scList,
+                itemStyles: scListStyles
             };
         });
 
         let cHeading = c.querySelector('h2, h3, h4, h5, .panel__title, .card-title, .pillar-title, .runtime__name, [class*="title"]');
-        if (cHeading && subCardEls.some(sc => sc.contains(cHeading))) {
+        if (cHeading && (
+            subCardEls.some(sc => sc.contains(cHeading)) ||
+            fItemEls.some(fi => fi.contains(cHeading)) ||
+            pipeStepEls.some(ps => ps.contains(cHeading)) ||
+            flowEls.some(fl => fl.contains(cHeading)) ||
+            hlBoxEls.some(hb => hb.contains(cHeading))
+        )) {
             cHeading = null;
         }
         let tagEl = c.querySelector('.panel__tag, [class*="panel__tag"], span[class*="tag"], .ma-pillar__num, .date, .no');
-        if (tagEl && subCardEls.some(sc => sc.contains(tagEl))) {
+        if (tagEl && (
+            subCardEls.some(sc => sc.contains(tagEl)) ||
+            fItemEls.some(fi => fi.contains(tagEl)) ||
+            pipeStepEls.some(ps => ps.contains(tagEl)) ||
+            hlBoxEls.some(hb => hb.contains(tagEl)) ||
+            tagEl.closest('p, li')
+        )) {
             tagEl = null;
         }
 
@@ -471,6 +699,8 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
             const eyebrowCandidates = Array.from(c.querySelectorAll('div, span')).filter(el => {
                 if (el === cHeading || el.contains(cHeading) || cHeading.contains(el)) return false;
                 if (subCardEls.some(sc => sc.contains(el))) return false;
+                if (fItemEls.some(fi => fi.contains(el))) return false;
+                if (pipeStepEls.some(ps => ps.contains(el))) return false;
                 if (el.children.length > 1) return false;
                 const er = el.getBoundingClientRect();
                 const txt = el.innerText ? el.innerText.trim() : '';
@@ -487,6 +717,9 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
             const boldCandidates = Array.from(c.querySelectorAll('div, span, b, strong')).filter(el => {
                 if (el === tagEl || (tagEl && (tagEl.contains(el) || el.contains(tagEl)))) return false;
                 if (subCardEls.some(sc => sc.contains(el) || el.contains(sc))) return false;
+                if (fItemEls.some(fi => fi.contains(el) || el.contains(fi))) return false;
+                if (pipeStepEls.some(ps => ps.contains(el) || el.contains(ps))) return false;
+                if (hlBoxEls.some(hb => hb.contains(el) || el.contains(hb))) return false;
                 if (el.closest('li, p, table, pre, code')) return false;
                 if (el.querySelector('div, p, ul, table, canvas, svg')) return false;
                 const txt = el.innerText ? el.innerText.trim() : '';
@@ -505,66 +738,28 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
             styles: getStyles(tagEl)
         } : null;
 
-        const cardTitle = cHeading ? cHeading.innerText.trim() : '';
+        let cardTitle = '';
+        if (cHeading) {
+            const hClone = cHeading.cloneNode(true);
+            hClone.querySelectorAll('.badge, [class*="badge"], [class*="tag"], [class*="pill"]').forEach(b => b.remove());
+            cardTitle = (hClone.innerText || hClone.textContent || cHeading.innerText || '').trim();
+        }
         const titleRect = cHeading ? toIn(cHeading.getBoundingClientRect()) : null;
         const titleStyles = cHeading ? getStyles(cHeading) : null;
 
         const cDescEl = c.querySelector('.panel__desc, .card-desc, .runtime__role, p.one');
-        const cardDesc = (cDescEl && (!subCardEls.some(sc => sc.contains(cDescEl)))) ? cDescEl.innerText.trim() : '';
+        const cardDesc = (cDescEl && (!subCardEls.some(sc => sc.contains(cDescEl))) && (!fItemEls.some(fi => fi.contains(cDescEl)))) ? cDescEl.innerText.trim() : '';
         const cardDescObj = (cDescEl && cardDesc) ? {
             text: cardDesc,
             rect: toIn(cDescEl.getBoundingClientRect()),
             styles: getStyles(cDescEl)
         } : null;
 
-        const pipeStepEls = Array.from(c.querySelectorAll('.ma-pipe-step, [class*="pipe-step"], [class*="step-item"]'));
-        const pipeSteps = pipeStepEls.map(stEl => {
-            const h = stEl.querySelector('h3, h4, h5, [class*="title"], strong');
-            const p = stEl.querySelector('p, span:last-child');
-            return {
-                rect: toIn(stEl.getBoundingClientRect()),
-                styles: getStyles(stEl),
-                stepNum: stEl.getAttribute('data-step') || '',
-                title: h ? h.innerText.trim() : '',
-                desc: p && p !== h ? p.innerText.trim() : ''
-            };
-        });
-
-        const flowEls = Array.from(c.querySelectorAll('.flow, [class*="flow"]'));
-        const flows = flowEls.map(fl => {
-            const nodes = Array.from(fl.querySelectorAll('.flow__node, [class*="node"]')).map(n => ({
-                text: n.innerText.trim(),
-                rect: toIn(n.getBoundingClientRect()),
-                styles: getStyles(n)
-            }));
-            const arrowEl = fl.querySelector('.flow__arrow, [class*="arrow"]');
-            return {
-                rect: toIn(fl.getBoundingClientRect()),
-                nodes: nodes,
-                arrow: arrowEl ? arrowEl.innerText.trim() : '→'
-            };
-        }).filter(f => f.nodes.length > 0);
-
-        const fItemEls = Array.from(c.querySelectorAll('.f-item, [class*="f-item"]')).filter(fi => fi !== c);
-        const fItems = fItemEls.map(fi => {
-            const ic = fi.querySelector('.f-item__icon, [class*="icon"]');
-            const tx = fi.querySelector('div:last-child, span:last-child, p');
-            return {
-                rect: toIn(fi.getBoundingClientRect()),
-                styles: getStyles(fi),
-                icon: ic ? ic.innerText.trim() : '',
-                iconRect: ic ? toIn(ic.getBoundingClientRect()) : null,
-                iconStyles: ic ? getStyles(ic) : null,
-                text: tx && tx !== ic ? tx.innerText.trim() : fi.innerText.replace(ic ? ic.innerText : '', '').trim(),
-                textRect: tx && tx !== ic ? toIn(tx.getBoundingClientRect()) : null,
-                textStyles: tx && tx !== ic ? getStyles(tx) : null
-            };
-        });
-
         const codeBlocks = [];
-        c.querySelectorAll('pre, .file, .code-block, [class*="code"]').forEach(cb => {
+        c.querySelectorAll('pre, .file, .code-block').forEach(cb => {
             if (cb.closest('li, p')) return;
             if (subCardEls.some(sc => sc.contains(cb) || cb.contains(sc))) return;
+            if (fItemEls.some(fi => fi.contains(cb) || cb.contains(fi))) return;
             const txt = cb.innerText.trim();
             if (txt) {
                 codeBlocks.push({
@@ -579,6 +774,11 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
             if (b === tagEl || (tagEl && tagEl.contains(b))) return false;
             if (cHeading && (b === cHeading || b.contains(cHeading))) return false;
             if (subCardEls.some(sc => sc.contains(b))) return false;
+            if (fItemEls.some(fi => fi.contains(b))) return false;
+            if (pipeStepEls.some(ps => ps.contains(b))) return false;
+            if (hlBoxEls.some(hb => hb.contains(b))) return false;
+            const parentP = b.closest('p, li');
+            if (parentP && parentP.innerText.trim() !== b.innerText.trim()) return false;
             if (isAttachCard) return false;
             return b.innerText.trim().length > 0;
         });
@@ -607,13 +807,16 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
                 if (flowEls.some(fl => fl.contains(el) || el.contains(fl))) return;
                 if (fItemEls.some(fi => fi.contains(el) || el.contains(fi))) return;
                 if (pipeStepEls.some(ps => ps.contains(el) || el.contains(ps))) return;
+                if (hlBoxEls.some(hb => hb === el || hb.contains(el) || el.contains(hb))) return;
+                if (el.closest('pre, code')) return;
                 if (codeBlocks.some(cb => cb.text === (el.innerText ? el.innerText.trim() : ''))) return;
                 if (el.querySelector('p, li, div, ul, ol, table, pre, canvas, svg')) return;
                 if (el.tagName.toLowerCase() === 'span') {
                     if (leafBlockEls.some(lb => lb.contains(el))) return;
                     if (el.querySelector('span')) return;
                 }
-                const rawTxt = el.innerText ? el.innerText.trim().replace(/\\s*\\n\\s*/g, '  ') : '';
+                const hasBr = !!el.querySelector('br');
+                const rawTxt = el.innerText ? (hasBr ? el.innerText.trim().replace(/[ \\t]*\\n[ \\t]*/g, '\\n') : el.innerText.trim().replace(/\\s*\\n\\s*/g, '  ')) : '';
                 if (!rawTxt || seenTexts.has(rawTxt)) return;
                 if (cardTitle && (cardTitle.includes(rawTxt) || rawTxt.includes(cardTitle)) && rawTxt.length <= cardTitle.length + 4) return;
                 seenTexts.add(rawTxt);
@@ -626,7 +829,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
                 });
             });
 
-            if (paras.length === 0 && subCards.length === 0 && codeBlocks.length === 0) {
+            if (paras.length === 0 && subCards.length === 0 && codeBlocks.length === 0 && hlBoxEls.length === 0) {
                 let directTxt = c.innerText ? c.innerText.trim() : '';
                 if (cardTitle && directTxt.startsWith(cardTitle)) {
                     directTxt = directTxt.slice(cardTitle.length).trim();
@@ -679,16 +882,34 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
     const tables = [];
     s.querySelectorAll('table').forEach(tbl => {
         const parentCard = tbl.closest('.info-card, .card, .panel, [class*="rounded"]');
-        const cardTitle = parentCard && parentCard.querySelector('h3, h4, [class*="font-bold"], [class*="title"]') ? parentCard.querySelector('h3, h4, [class*="font-bold"], [class*="title"]').innerText.trim() : '';
+        const cTitleEl = parentCard ? Array.from(parentCard.querySelectorAll('h3, h4, [class*="font-bold"], [class*="title"]')).find(el => !tbl.contains(el)) : null;
+        const cardTitle = cTitleEl ? cTitleEl.innerText.trim() : '';
+        const cardTitleRect = cTitleEl ? toIn(cTitleEl.getBoundingClientRect()) : null;
+        const cardTitleStyles = cTitleEl ? getStyles(cTitleEl) : null;
+        const cardRect = parentCard ? toIn(parentCard.getBoundingClientRect()) : null;
+        const cardStyles = parentCard ? getStyles(parentCard) : null;
         const tRect = toIn(tbl.getBoundingClientRect());
         const headers = [];
         tbl.querySelectorAll('thead th, tr:first-child th').forEach(th => {
             const st = getStyles(th);
+            let hBg = st.backgroundColor;
+            if (!hBg || hBg === 'transparent' || hBg === 'rgba(0, 0, 0, 0)') {
+                const trP = th.parentElement;
+                if (trP) hBg = getStyles(trP).backgroundColor;
+            }
+            if (!hBg || hBg === 'transparent' || hBg === 'rgba(0, 0, 0, 0)') {
+                const theadP = th.closest('thead');
+                if (theadP) hBg = getStyles(theadP).backgroundColor;
+            }
+            if (hBg === 'transparent' || hBg === 'rgba(0, 0, 0, 0)') hBg = null;
             headers.push({
                 text: th.innerText.trim(),
                 color: st.color,
-                bgColor: st.backgroundColor !== 'transparent' && st.backgroundColor !== 'rgba(0, 0, 0, 0)' ? st.backgroundColor : null,
-                fontWeight: st.fontWeight
+                bgColor: hBg,
+                fontSizePt: st.fontSizePt,
+                fontWeight: st.fontWeight,
+                textAlign: st.textAlign,
+                borderColor: st.borderColor
             });
         });
         const rows = [];
@@ -703,23 +924,50 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
                 if (!cellBg || cellBg === 'transparent' || cellBg === 'rgba(0, 0, 0, 0)') {
                     cellBg = trSt.backgroundColor;
                 }
+                if (!cellBg || cellBg === 'transparent' || cellBg === 'rgba(0, 0, 0, 0)') {
+                    const tbodyP = td.closest('tbody');
+                    if (tbodyP) cellBg = getStyles(tbodyP).backgroundColor;
+                }
                 if (cellBg === 'transparent' || cellBg === 'rgba(0, 0, 0, 0)') {
                     cellBg = null;
+                }
+                const onlyBadge = !!(mb && td.innerText.trim() === mb.innerText.trim());
+                const mbSt = mb ? getStyles(mb) : null;
+                const runs = [];
+                if (!onlyBadge && td.children.length > 0 && td.querySelector('b, strong, span')) {
+                    td.childNodes.forEach(n => {
+                        if (n.nodeType === 3) {
+                            if (n.textContent) runs.push({ text: n.textContent, bold: st.isBold, color: st.color });
+                        } else if (n.nodeType === 1) {
+                            const nSt = getStyles(n);
+                            const nTxt = n.innerText || n.textContent || '';
+                            if (nTxt) runs.push({ text: nTxt, bold: nSt.isBold || n.tagName === 'B' || n.tagName === 'STRONG', color: nSt.color });
+                        }
+                    });
                 }
                 rowCells.push({
                     text: td.innerText.trim(),
                     color: st.color,
                     bgColor: cellBg,
-                    is_bold: parseInt(st.fontWeight) >= 600,
-                    has_badge: !!mb,
-                    badge_text: mb ? mb.innerText.trim() : null
+                    fontSizePt: st.fontSizePt,
+                    is_bold: parseInt(st.fontWeight) >= 600 || (td.children.length === 1 && (td.firstElementChild.tagName === 'B' || td.firstElementChild.tagName === 'STRONG') && td.innerText.trim() === td.firstElementChild.innerText.trim()),
+                    has_badge: onlyBadge,
+                    badge_text: onlyBadge && mb ? mb.innerText.trim() : null,
+                    badge_color: onlyBadge && mbSt ? mbSt.color : null,
+                    badge_bg: onlyBadge && mbSt ? mbSt.backgroundColor : null,
+                    runs: runs.length > 1 ? runs : [],
+                    borderColor: st.borderColor || trSt.borderColor
                 });
             });
             if (rowCells.length) rows.push(rowCells);
         });
         tables.push({
             rect: tRect,
+            cardRect: cardRect,
+            cardStyles: cardStyles,
             cardTitle: cardTitle,
+            cardTitleRect: cardTitleRect,
+            cardTitleStyles: cardTitleStyles,
             inCard: !!parentCard,
             headers: headers,
             rows: rows,
@@ -731,20 +979,46 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
     const footnotes = [];
     const footnoteEls = [];
     const seenFn = new Set();
-    s.querySelectorAll('.foot__n, .footnote, [class*="footnote"], [class*="bottom-note"]').forEach(el => {
+    let footerDividerTop = null;
+    let footerDividerColor = null;
+    const rawFootnotes = Array.from(s.querySelectorAll('.foot__n, .footnote, [class*="footnote"], [class*="bottom-note"]'));
+    const topFootnotes = rawFootnotes.filter(el => !rawFootnotes.some(p => p !== el && p.contains(el)));
+    topFootnotes.forEach(el => {
+        if (el === num) return;
+        const cs = window.getComputedStyle(el);
+        const btw = parseFloat(cs.borderTopWidth) || 0;
+        const elRectIn = toIn(el.getBoundingClientRect());
+        if (btw > 0 && footerDividerTop === null) {
+            footerDividerTop = elRectIn.top;
+            footerDividerColor = cs.borderTopColor;
+        }
+        if (cs.display.includes('flex') && el.children.length >= 2) {
+            footnoteEls.push(el);
+            Array.from(el.children).forEach(ch => {
+                const cTxt = ch.innerText ? ch.innerText.trim() : '';
+                if (!cTxt || seenFn.has(cTxt)) return;
+                seenFn.add(cTxt);
+                footnotes.push({
+                    rect: toIn(ch.getBoundingClientRect()),
+                    styles: getStyles(ch),
+                    text: cTxt
+                });
+            });
+            return;
+        }
         const txt = el.innerText ? el.innerText.trim() : '';
         if (!txt || seenFn.has(txt)) return;
         seenFn.add(txt);
         footnoteEls.push(el);
         footnotes.push({
-            rect: toIn(el.getBoundingClientRect()),
+            rect: elRectIn,
             styles: getStyles(el),
             text: txt
         });
     });
     if (footnotes.length === 0) {
         s.querySelectorAll('p, div, span, small').forEach(el => {
-            if (el === subDesc || el === mainH) return;
+            if (el === subDesc || el === mainH || el === num) return;
             if (el.querySelector('p, div, span, table')) return;
             if (topContainers.some(tc => tc.contains(el))) return;
             if (hlBoxEls.some(hb => hb.contains(el))) return;
@@ -768,8 +1042,8 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
 
     const desc = [];
     const seenDesc = new Set();
-    s.querySelectorAll('p.cover-desc, p.intro-desc, div.meta, div.arrow, span.x').forEach(el => {
-        if (el === subDesc || el === mainH) return;
+    s.querySelectorAll('p.cover-desc, p.cover-description, [class*="cover-desc"], p.intro-desc, div.meta, div.arrow, span.x').forEach(el => {
+        if (el === subDesc || el === mainH || el === num) return;
         if (topContainers.some(tc => tc === el || tc.contains(el))) return;
         if (hlBoxEls.some(hb => hb === el || hb.contains(el))) return;
         if (footnoteEls.some(fn => fn === el || fn.contains(el))) return;
@@ -788,10 +1062,12 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
     return {
         id: targetId,
         slideBgColor: slideBg,
+        headerDividerTop: headerDividerTop,
+        headerDividerColor: headerDividerColor,
         headerBadges: headerBadges,
         tag: headerBadges.length > 0 ? headerBadges[0] : null,
         num: num ? { text: num.innerText.trim(), rect: toIn(num.getBoundingClientRect()), styles: getStyles(num) } : null,
-        title: mainH ? { text: mainH.innerText.trim(), rect: toIn(mainH.getBoundingClientRect()), styles: getStyles(mainH) } : null,
+        title: mainH ? { text: mainH.innerText.trim(), rect: toIn(mainH.getBoundingClientRect()), styles: getStyles(mainH), runs: titleRuns } : null,
         sub: subDesc ? { text: subDesc.innerText.trim(), rect: toIn(subDesc.getBoundingClientRect()), styles: getStyles(subDesc) } : null,
         desc: desc,
         images: images,
@@ -799,7 +1075,9 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
         charts: charts,
         tables: tables,
         highlightBoxes: hlBoxes,
+        footerDividerTop: footerDividerTop,
+        footerDividerColor: footerDividerColor,
         footnotes: footnotes
     };
-})()
+})();
 """
