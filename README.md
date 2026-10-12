@@ -65,3 +65,6 @@ cd html_to_slide
 # 특정 슬라이드(예: 2번 슬라이드)만 변환 + JSON 결과 출력
 ./.venv/bin/python scripts/convert_html_to_pptx.py deck.html -s 2 -o slide2.pptx --json
 ```
+<img width="669" height="69" alt="image" src="https://github.com/user-attachments/assets/397af9f8-7b44-49e1-8dac-7b29c7ef7937" />
+
+<img width="1365" height="733" alt="image" src="https://github.com/user-attachments/assets/2f0b6adb-fa21-4042-bf4e-270838f1f47c" />
