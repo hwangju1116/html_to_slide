@@ -171,33 +171,51 @@ def extract_global_design_tokens(
                 tokens["text_muted_hex"] = css_vars[muted_key]
                 break
 
+        html_no_fontface = re.sub(
+            r"@font-face\s*\{[^}]*\}", "", raw_html, flags=re.IGNORECASE | re.DOTALL
+        )
         font_match = re.search(
-            r"(?:body|html|\.slide)\s*\{[^}]*font-family\s*:\s*([^;\}]+)",
-            raw_html,
+            r"(?:body|html|\.slide(?:-container|-view|-canvas)?)\s*\{[^}]*font-family\s*:\s*([^;\}]+)",
+            html_no_fontface,
             re.IGNORECASE | re.DOTALL,
         )
-        if not font_match:
-            font_match = re.search(
-                r"font-family\s*:\s*([^;\}]+)", raw_html, re.IGNORECASE
-            )
+        generic_families = {
+            "sans-serif",
+            "serif",
+            "monospace",
+            "system-ui",
+            "-apple-system",
+            "blinkmacsystemfont",
+            "ui-sans-serif",
+            "ui-serif",
+            "ui-monospace",
+            "cursive",
+            "fantasy",
+            "inherit",
+            "initial",
+            "unset",
+        }
+        font_resolved = False
         if font_match:
+            raw_font_val = font_match.group(1).strip()
+            m_font_var = re.search(r"var\(\s*(--[a-zA-Z0-9_-]+)\s*\)", raw_font_val)
+            if m_font_var and m_font_var.group(1) in css_vars:
+                raw_font_val = css_vars[m_font_var.group(1)]
             raw_families = [
                 f.strip().strip("'\"")
-                for f in font_match.group(1).split(",")
+                for f in raw_font_val.split(",")
                 if f.strip()
             ]
-            generic_families = {
-                "sans-serif",
-                "serif",
-                "monospace",
-                "system-ui",
-                "-apple-system",
-                "blinkmacsystemfont",
-            }
             for fam in raw_families:
                 if fam.lower() not in generic_families and not fam.startswith("var("):
                     tokens["font_name"] = fam
+                    font_resolved = True
                     break
+
+        if not font_resolved and first_slide_geometry and first_slide_geometry.get("slideFontFamily"):
+            dom_ff = str(first_slide_geometry["slideFontFamily"]).strip()
+            if dom_ff and dom_ff.lower() not in generic_families:
+                tokens["font_name"] = dom_ff
 
     if first_slide_geometry and first_slide_geometry.get("slideBgColor"):
         measured_bg = parse_color_value(first_slide_geometry["slideBgColor"], default=None)

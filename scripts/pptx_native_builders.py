@@ -45,6 +45,8 @@ _SPPR_FILL_TAGS = {
     qn("a:grpFill"),
 }
 
+from xml.sax.saxutils import quoteattr
+
 _RPR_AFTER_HIGHLIGHT_TAGS = {
     qn("a:uLnTx"),
     qn("a:uLn"),
@@ -59,6 +61,82 @@ _RPR_AFTER_HIGHLIGHT_TAGS = {
     qn("a:rtl"),
     qn("a:extLst"),
 }
+
+_RPR_AFTER_FONT_TAGS = {
+    qn("a:sym"),
+    qn("a:hlinkClick"),
+    qn("a:hlinkMouseOver"),
+    qn("a:rtl"),
+    qn("a:extLst"),
+}
+
+_LATIN_ONLY_FONTS = {
+    "inter",
+    "roboto",
+    "montserrat",
+    "arial",
+    "helvetica",
+    "georgia",
+    "times new roman",
+    "courier new",
+    "consolas",
+    "poppins",
+    "open sans",
+    "lato",
+    "plus jakarta sans",
+    "segoe ui",
+    "sf pro display",
+    "sf pro text",
+    "playfair display",
+    "merriweather",
+    "fira code",
+    "jetbrains mono",
+    "ubuntu",
+}
+
+
+def apply_multilingual_font(
+    font_obj,
+    font_name: str,
+    text_sample: str = "",
+) -> None:
+  if not font_name:
+    return
+  try:
+    font_obj.name = font_name
+    ea_font = "Pretendard" if font_name.strip().lower() in _LATIN_ONLY_FONTS else font_name
+    rPr = font_obj._element
+    for ch in list(rPr):
+      if ch.tag in (qn("a:ea"), qn("a:cs")):
+        rPr.remove(ch)
+    insert_idx = len(rPr)
+    for idx, ch in enumerate(rPr):
+      if ch.tag == qn("a:latin"):
+        insert_idx = idx + 1
+        break
+      if ch.tag in _RPR_AFTER_FONT_TAGS:
+        insert_idx = idx
+        break
+    ea_el = parse_xml(f'<a:ea {nsdecls("a")} typeface={quoteattr(ea_font)}/>')
+    cs_el = parse_xml(f'<a:cs {nsdecls("a")} typeface={quoteattr(font_name)}/>')
+    rPr.insert(insert_idx, cs_el)
+    rPr.insert(insert_idx, ea_el)
+  except Exception as e:
+    logger.debug("Failed to apply multilingual font XML: %s", e)
+
+
+def _resolve_el_font(
+    styles: Optional[Dict[str, Any]],
+    fallback_font: str = "Pretendard",
+) -> str:
+  if not styles or not isinstance(styles, dict):
+    return fallback_font
+  ff = str(styles.get("fontFamily") or "").strip()
+  if styles.get("isCode"):
+    return ff if (ff and ff != fallback_font) else "Consolas"
+  if ff:
+    return ff
+  return fallback_font
 
 
 def apply_linear_gradient_fill(
@@ -178,7 +256,7 @@ def render_rich_runs_into_text_frame(
   if bullet_prefix:
     b_run = p.add_run()
     b_run.text = bullet_prefix
-    b_run.font.name = default_font
+    apply_multilingual_font(b_run.font, default_font, bullet_prefix)
     b_run.font.size = Pt(default_size_pt)
     b_run.font.bold = default_bold
     b_run.font.color.rgb = default_color_rgb
@@ -205,7 +283,7 @@ def render_rich_runs_into_text_frame(
     if prev_had_highlight and has_hl and not raw_txt.startswith(" "):
       sep_run = p.add_run()
       sep_run.text = "  "
-      sep_run.font.name = default_font
+      apply_multilingual_font(sep_run.font, default_font)
       sep_run.font.size = Pt(float(r_item.get("fontSizePt") or default_size_pt))
       sep_run.font.color.rgb = default_color_rgb
 
@@ -226,7 +304,7 @@ def render_rich_runs_into_text_frame(
     if lead_ws:
       lw_run = p.add_run()
       lw_run.text = lead_ws
-      lw_run.font.name = default_font
+      apply_multilingual_font(lw_run.font, default_font)
       lw_run.font.size = Pt(r_size_pt)
       lw_run.font.color.rgb = default_color_rgb
 
@@ -237,7 +315,12 @@ def render_rich_runs_into_text_frame(
       run.text = f"\u00A0{core_txt}\u00A0"
     else:
       run.text = core_txt if has_hl else raw_txt
-    run.font.name = "Consolas" if is_code else default_font
+    raw_r_ff = str(r_item.get("fontFamily") or "").strip()
+    if is_code:
+      r_font = raw_r_ff if (raw_r_ff and raw_r_ff != default_font) else "Consolas"
+    else:
+      r_font = raw_r_ff or default_font
+    apply_multilingual_font(run.font, r_font, run.text)
     run.font.size = Pt(r_size_pt)
     if "isBold" in r_item:
       run.font.bold = bool(r_item["isBold"]) or is_badge
@@ -253,7 +336,7 @@ def render_rich_runs_into_text_frame(
     if trail_ws:
       tw_run = p.add_run()
       tw_run.text = trail_ws
-      tw_run.font.name = default_font
+      apply_multilingual_font(tw_run.font, default_font)
       tw_run.font.size = Pt(r_size_pt)
       tw_run.font.color.rgb = default_color_rgb
 
@@ -411,6 +494,7 @@ def build_styled_native_table(
       h_bg = h.get("bgColor") if isinstance(h, dict) else None
       h_col = h.get("color") if isinstance(h, dict) else None
       h_size = float(h.get("fontSizePt") or 10.5) if isinstance(h, dict) else 10.5
+      h_font = (str(h.get("fontFamily") or "").strip() if isinstance(h, dict) else "") or font_name
 
       if h_bg:
         header_bg_rgb = parse_color_value(h_bg, default=RGBColor(15, 23, 42) if is_dark else RGBColor(243, 245, 249), bg_blend_rgb=blend_rgb)
@@ -437,12 +521,12 @@ def build_styled_native_table(
       cell.margin_bottom = Inches(0.08)
       set_cell_horizontal_borders(cell, row_border_rgb, width_pt=0.75, top_border=False, bottom_border=True)
       p = cell.text_frame.paragraphs[0]
-      p.font.name = font_name
+      apply_multilingual_font(p.font, h_font, h_text)
       p.font.size = Pt(h_size)
       p.font.bold = True
       p.font.color.rgb = header_fg_rgb
       for r in p.runs:
-        r.font.name = font_name
+        apply_multilingual_font(r.font, h_font, r.text)
         r.font.size = Pt(h_size)
         r.font.bold = True
         r.font.color.rgb = header_fg_rgb
@@ -475,7 +559,8 @@ def build_styled_native_table(
       tf = cell.text_frame
       tf.word_wrap = True
       p = tf.paragraphs[0]
-      p.font.name = font_name
+      cell_font = str(cell_data.get("fontFamily") or "").strip() or font_name
+      apply_multilingual_font(p.font, cell_font, str(cell_data.get("text") or ""))
       cell_size_pt = float(cell_data.get("fontSizePt") or 10.5)
       p.font.size = Pt(cell_size_pt)
 
@@ -499,7 +584,7 @@ def build_styled_native_table(
         render_rich_runs_into_text_frame(
             tf,
             cell_data["runs"],
-            default_font=font_name,
+            default_font=cell_font,
             default_size_pt=cell_size_pt,
             default_color_rgb=col_rgb,
             default_bold=bool(cell_data.get("is_bold")),
@@ -509,7 +594,7 @@ def build_styled_native_table(
         for l_idx, line_info in enumerate(cell_data["lines"]):
           lp = tf.paragraphs[0] if l_idx == 0 else tf.add_paragraph()
           lp.text = line_info.get("text", "")
-          lp.font.name = font_name
+          apply_multilingual_font(lp.font, cell_font, lp.text)
           lp.font.size = Pt(float(line_info.get("fontSizePt") or (cell_size_pt if l_idx == 0 else 9.0)))
           lp.font.bold = bool(line_info.get("isBold", l_idx == 0 and cell_data.get("is_bold")))
           l_col = parse_color_value(line_info.get("color"), default=col_rgb)
@@ -526,7 +611,7 @@ def build_styled_native_table(
         p.text = ""
         run = p.add_run()
         run.text = f"\u00A0{b_txt}\u00A0" if b_bg else b_txt
-        run.font.name = font_name
+        apply_multilingual_font(run.font, cell_font, run.text)
         run.font.size = Pt(cell_size_pt)
         run.font.bold = True
         run.font.color.rgb = b_col
@@ -538,7 +623,7 @@ def build_styled_native_table(
         p.font.bold = is_cell_b
         p.font.color.rgb = col_rgb
         for r in p.runs:
-          r.font.name = font_name
+          apply_multilingual_font(r.font, cell_font, r.text)
           r.font.size = Pt(cell_size_pt)
           r.font.bold = is_cell_b
           r.font.color.rgb = col_rgb
@@ -1257,6 +1342,9 @@ def build_slide_from_geometry(
   if not geom:
     return
 
+  if geom.get("slideFontFamily") and font_name == "Pretendard":
+    font_name = str(geom["slideFontFamily"]).strip() or font_name
+
   if brand_color_rgb is None:
     brand_color_rgb = RGBColor(37, 99, 235)
 
@@ -1307,7 +1395,7 @@ def build_slide_from_geometry(
     tf.margin_bottom = Inches(0.02)
     p = tf.paragraphs[0]
     p.text = b_txt
-    p.font.name = font_name
+    p.font.name = _resolve_el_font(b_st, font_name)
     p.font.size = Pt(float(b_st.get("fontSizePt") or 10.5))
     p.font.bold = True
     p.font.color.rgb = fg_rgb
@@ -1316,6 +1404,7 @@ def build_slide_from_geometry(
   if geom.get("num") and geom["num"]["text"]:
     n_data = geom["num"]
     r = n_data["rect"]
+    n_st = n_data.get("styles") or {}
     num_box = slide.shapes.add_textbox(
         Inches(min(12.2, r["left"])),
         Inches(r["top"]),
@@ -1324,16 +1413,17 @@ def build_slide_from_geometry(
     )
     p = num_box.text_frame.paragraphs[0]
     p.text = n_data["text"]
-    p.font.name = font_name
-    p.font.size = Pt(float((n_data.get("styles") or {}).get("fontSizePt") or 10.5))
+    p.font.name = _resolve_el_font(n_st, font_name)
+    p.font.size = Pt(float(n_st.get("fontSizePt") or 10.5))
     p.font.bold = True
-    p.font.color.rgb = parse_color_value(n_data["styles"].get("color") if n_data.get("styles") else None, RGBColor(148, 163, 184) if is_dark else RGBColor(100, 116, 139))
+    p.font.color.rgb = parse_color_value(n_st.get("color"), RGBColor(148, 163, 184) if is_dark else RGBColor(100, 116, 139))
 
   header_bottom = 0.0
   if geom.get("title") and geom["title"]["text"]:
     t_data = geom["title"]
     r = t_data["rect"]
     st = t_data["styles"]
+    t_font = _resolve_el_font(st, font_name)
     is_center = st.get("textAlign") == "center"
     t_left = Inches(r["left"]) if is_center else Inches(max(0.5, r["left"]))
     t_top = Inches(r["top"])
@@ -1354,7 +1444,7 @@ def build_slide_from_geometry(
       render_rich_runs_into_text_frame(
           tf,
           t_runs,
-          default_font=font_name,
+          default_font=t_font,
           default_size_pt=t_size_pt,
           default_color_rgb=default_t_col,
           default_bold=True,
@@ -1364,7 +1454,7 @@ def build_slide_from_geometry(
     else:
       p = tf.paragraphs[0]
       p.text = t_data["text"]
-      p.font.name = font_name
+      p.font.name = t_font
       p.font.size = Pt(t_size_pt)
       p.font.bold = True
       p.font.color.rgb = default_t_col
@@ -1375,6 +1465,7 @@ def build_slide_from_geometry(
     s_data = geom["sub"]
     r = s_data["rect"]
     st = s_data["styles"]
+    s_font = _resolve_el_font(st, font_name)
     s_left = Inches(max(0.5, r["left"]))
     s_top = Inches(r["top"])
     s_w = Inches(min(12.2, max(r["width"], 4.0)))
@@ -1393,7 +1484,7 @@ def build_slide_from_geometry(
       render_rich_runs_into_text_frame(
           tf,
           s_data["runs"],
-          default_font=font_name,
+          default_font=s_font,
           default_size_pt=s_size_pt,
           default_color_rgb=s_col,
           default_bold=bool(st.get("isBold")),
@@ -1402,7 +1493,7 @@ def build_slide_from_geometry(
     else:
       p = tf.paragraphs[0]
       p.text = s_data["text"]
-      p.font.name = font_name
+      p.font.name = s_font
       p.font.size = Pt(s_size_pt)
       p.font.color.rgb = s_col
 
@@ -1420,7 +1511,7 @@ def build_slide_from_geometry(
     tf.margin_bottom = Inches(0.0)
     p = tf.paragraphs[0]
     p.text = d["text"]
-    p.font.name = font_name
+    p.font.name = _resolve_el_font(st, font_name)
     p.font.size = Pt(float(st.get("fontSizePt") or 11.0))
     p.font.bold = bool(st.get("isBold"))
     p.font.color.rgb = parse_color_value(st.get("color"), RGBColor(203, 213, 225) if is_dark else RGBColor(74, 77, 82))
@@ -1490,7 +1581,7 @@ def build_slide_from_geometry(
       tf.margin_bottom = Inches(0.0)
       p = tf.paragraphs[0]
       p.text = d_txt
-      p.font.name = font_name
+      p.font.name = _resolve_el_font(dst, font_name)
       p.font.size = Pt(float(dst.get("fontSizePt") or 8.5))
       p.font.bold = True
       p.font.color.rgb = parse_color_value(dst.get("color"), RGBColor(255, 255, 255))
@@ -1502,6 +1593,7 @@ def build_slide_from_geometry(
   for card in geom.get("cards", []):
     r = card["rect"]
     c_st = card.get("styles", {})
+    c_font = _resolve_el_font(c_st, font_name)
     raw_c_top = float(r["top"])
     raw_c_h = float(r["height"])
     if min_body_top > 0.0 and raw_c_top < min_body_top and raw_c_top > 0.8:
@@ -1527,14 +1619,14 @@ def build_slide_from_geometry(
       tf.margin_right = Inches(0.05)
       p0 = tf.paragraphs[0]
       p0.text = b_info.get("arrow", "➔")
-      p0.font.name = font_name
+      p0.font.name = c_font
       p0.font.size = Pt(15.0)
       p0.font.bold = True
       p0.font.color.rgb = RGBColor(255, 255, 255)
       p0.alignment = PP_ALIGN.CENTER
       p1 = tf.add_paragraph()
       p1.text = b_info.get("text", "")
-      p1.font.name = font_name
+      p1.font.name = c_font
       p1.font.size = Pt(9.0)
       p1.font.bold = True
       p1.font.color.rgb = RGBColor(255, 255, 255)
@@ -1586,7 +1678,7 @@ def build_slide_from_geometry(
       tf.margin_bottom = Inches(0.14)
       p0 = tf.paragraphs[0]
       p0.text = ad["target"] + (f"  [{ad['mode']}]" if ad.get("mode") else "")
-      p0.font.name = font_name
+      p0.font.name = c_font
       p0.font.size = Pt(12.5)
       p0.font.bold = True
       p0.font.color.rgb = brand_color_rgb
@@ -1600,7 +1692,7 @@ def build_slide_from_geometry(
       if ad.get("desc"):
         p2 = tf.add_paragraph()
         p2.text = ad["desc"]
-        p2.font.name = font_name
+        p2.font.name = c_font
         p2.font.size = Pt(10.0)
         p2.font.color.rgb = RGBColor(74, 85, 104)
       continue
@@ -1674,7 +1766,7 @@ def build_slide_from_geometry(
       tf.margin_bottom = Inches(0.01)
       p = tf.paragraphs[0]
       p.text = tg["text"]
-      p.font.name = "Consolas" if tg_st.get("isCode") else font_name
+      p.font.name = _resolve_el_font(tg_st, c_font)
       p.font.size = Pt(float(tg_st.get("fontSizePt") or 9.5))
       p.font.bold = True
       p.font.color.rgb = tg_fg
@@ -1719,7 +1811,7 @@ def build_slide_from_geometry(
         tf.margin_bottom = Inches(0.01)
         p = tf.paragraphs[0]
         p.text = b_txt
-        p.font.name = font_name
+        p.font.name = _resolve_el_font(b_st, c_font)
         p.font.size = Pt(float(b_st.get("fontSizePt") or 9.0))
         p.font.bold = True
         p.font.color.rgb = parse_color_value(b_st.get("color"), RGBColor(78, 86, 95))
@@ -1728,6 +1820,7 @@ def build_slide_from_geometry(
     if card.get("title") and card["title"] != "➔" and not has_pipeline:
       t_rect = card.get("titleRect") or {}
       t_st = card.get("titleStyles") or {}
+      ct_font = _resolve_el_font(t_st, c_font)
       t_left_in = float(t_rect.get("left", r["left"] + 0.18))
       t_top_in = float(t_rect.get("top", (curr_top / 914400.0)))
       t_w_in = max(0.8, float(t_rect.get("width", r["width"] - 0.36)))
@@ -1750,7 +1843,7 @@ def build_slide_from_geometry(
         render_rich_runs_into_text_frame(
             tf,
             card["titleRuns"],
-            default_font=font_name,
+            default_font=ct_font,
             default_size_pt=t_size,
             default_color_rgb=t_col,
             default_bold=True,
@@ -1759,7 +1852,7 @@ def build_slide_from_geometry(
       else:
         p = tf.paragraphs[0]
         p.text = card["title"]
-        p.font.name = font_name
+        p.font.name = ct_font
         p.font.size = Pt(t_size)
         p.font.bold = True
         p.font.color.rgb = t_col
@@ -1769,6 +1862,7 @@ def build_slide_from_geometry(
       d_obj = card["desc"]
       d_rect = d_obj.get("rect") or {}
       d_st = d_obj.get("styles") or {}
+      cd_font = _resolve_el_font(d_st, c_font)
       d_left_in = float(d_rect.get("left", r["left"] + 0.18))
       d_top_in = float(d_rect.get("top", (curr_top / 914400.0)))
       d_w_in = max(0.8, float(d_rect.get("width", r["width"] - 0.36)))
@@ -1786,7 +1880,7 @@ def build_slide_from_geometry(
         render_rich_runs_into_text_frame(
             tf,
             d_obj["runs"],
-            default_font=font_name,
+            default_font=cd_font,
             default_size_pt=d_size,
             default_color_rgb=d_col,
             default_bold=bool(d_st.get("isBold")),
@@ -1795,7 +1889,7 @@ def build_slide_from_geometry(
       else:
         p = tf.paragraphs[0]
         p.text = d_obj["text"]
-        p.font.name = font_name
+        p.font.name = cd_font
         p.font.size = Pt(d_size)
         p.font.color.rgb = d_col
       curr_top = max(curr_top, Inches(d_top_in + d_h_in + 0.04))
@@ -1817,7 +1911,7 @@ def build_slide_from_geometry(
       p0 = tf.paragraphs[0]
       step_prefix = f"{ps['stepNum']}. " if (ps.get("stepNum") and not str(ps.get("title", "")).startswith(str(ps["stepNum"]))) else ""
       p0.text = f"{step_prefix}{ps['title']}"
-      p0.font.name = font_name
+      p0.font.name = _resolve_el_font(ps.get("titleStyles") or ps.get("styles"), c_font)
       p0.font.size = Pt((ps.get("titleStyles") or {}).get("fontSizePt", 11.0))
       p0.font.bold = True
       t_col_str = (ps.get("titleStyles") or {}).get("color") or ps["styles"].get("color")
@@ -1827,7 +1921,7 @@ def build_slide_from_geometry(
       if ps.get("desc"):
         p1 = tf.add_paragraph()
         p1.text = ps["desc"]
-        p1.font.name = font_name
+        p1.font.name = _resolve_el_font(ps.get("descStyles") or ps.get("styles"), c_font)
         p1.font.size = Pt((ps.get("descStyles") or {}).get("fontSizePt", 9.5))
         d_col_str = (ps.get("descStyles") or {}).get("color") or ps["styles"].get("color")
         p1.font.color.rgb = parse_color_value(d_col_str, RGBColor(100, 116, 139))
@@ -1856,6 +1950,7 @@ def build_slide_from_geometry(
           fl_box.line.fill.background()
       for node in fl.get("nodes", []):
         nr = node["rect"]
+        n_st = node.get("styles", {})
         if node.get("isArrow"):
           arr_box = slide.shapes.add_textbox(Inches(nr["left"]), Inches(nr["top"]), Inches(max(0.24, nr["width"])), Inches(max(0.22, nr["height"])))
           tf = arr_box.text_frame
@@ -1864,17 +1959,17 @@ def build_slide_from_geometry(
           tf.margin_right = Inches(0.0)
           p = tf.paragraphs[0]
           p.text = node["text"]
-          p.font.name = font_name
+          p.font.name = _resolve_el_font(n_st, c_font)
           p.font.size = Pt(11.0)
           p.font.bold = True
-          p.font.color.rgb = parse_color_value(node.get("styles", {}).get("color"), brand_color_rgb)
+          p.font.color.rgb = parse_color_value(n_st.get("color"), brand_color_rgb)
           p.alignment = PP_ALIGN.CENTER
         else:
           n_shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(nr["left"]), Inches(nr["top"]), Inches(nr["width"]), Inches(nr["height"]))
           n_shape.fill.solid()
-          n_bg = parse_color_value(node["styles"]["backgroundColor"], RGBColor(241, 245, 249) if not node.get("isHighlight") else RGBColor(238, 242, 255), bg_blend_rgb=c_blend_rgb)
+          n_bg = parse_color_value(n_st.get("backgroundColor"), RGBColor(241, 245, 249) if not node.get("isHighlight") else RGBColor(238, 242, 255), bg_blend_rgb=c_blend_rgb)
           n_shape.fill.fore_color.rgb = n_bg
-          n_border = parse_color_value(node["styles"].get("borderColor"), brand_color_rgb if node.get("isHighlight") else RGBColor(203, 213, 225))
+          n_border = parse_color_value(n_st.get("borderColor"), brand_color_rgb if node.get("isHighlight") else RGBColor(203, 213, 225))
           n_shape.line.color.rgb = n_border
           n_shape.line.width = Pt(1.0)
           tf = n_shape.text_frame
@@ -1883,10 +1978,10 @@ def build_slide_from_geometry(
           tf.margin_right = Inches(0.06)
           p = tf.paragraphs[0]
           p.text = node["text"]
-          p.font.name = font_name
-          p.font.size = Pt(node["styles"].get("fontSizePt", 9.5))
+          p.font.name = _resolve_el_font(n_st, c_font)
+          p.font.size = Pt(n_st.get("fontSizePt", 9.5))
           p.font.bold = True
-          p.font.color.rgb = parse_color_value(node["styles"].get("color"), brand_color_rgb if node.get("isHighlight") else RGBColor(30, 41, 59))
+          p.font.color.rgb = parse_color_value(n_st.get("color"), brand_color_rgb if node.get("isHighlight") else RGBColor(30, 41, 59))
           p.alignment = PP_ALIGN.CENTER
 
     for fi in card.get("fItems", []):
@@ -1941,7 +2036,7 @@ def build_slide_from_geometry(
         tf.margin_bottom = Inches(0.02)
         p = tf.paragraphs[0]
         p.text = fi["icon"]
-        p.font.name = font_name
+        p.font.name = _resolve_el_font(fi.get("iconStyles") or fi_st, c_font)
         p.font.size = Pt(fi.get("iconStyles", {}).get("fontSizePt", 9.0) if fi.get("iconStyles") else 9.0)
         p.font.bold = True
         p.font.color.rgb = parse_color_value(
@@ -1971,7 +2066,7 @@ def build_slide_from_geometry(
         tf.margin_bottom = Inches(0.02)
         p = tf.paragraphs[0]
         p.text = fi["text"]
-        p.font.name = font_name
+        p.font.name = _resolve_el_font(fi.get("textStyles") or fi_st, c_font)
         p.font.size = Pt(fi.get("textStyles", {}).get("fontSizePt", 10.0) if fi.get("textStyles") else 10.0)
         p.font.color.rgb = parse_color_value(
             fi.get("textStyles", {}).get("color") if fi.get("textStyles") else None,
@@ -1981,6 +2076,7 @@ def build_slide_from_geometry(
     for sc in card.get("subCards", []):
       scr = sc["rect"]
       sc_st = sc.get("styles", {})
+      sc_font = _resolve_el_font(sc_st, c_font)
       sc_shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(scr["left"]), Inches(scr["top"]), Inches(scr["width"]), Inches(scr["height"]))
       try:
         sc_shape.adjustments[0] = 0.08 if float(scr.get("height", 0.5)) < 0.5 else 0.04
@@ -2022,7 +2118,7 @@ def build_slide_from_geometry(
         if sc.get("head"):
           p0 = tf.paragraphs[0]
           p0.text = sc["head"] + (f"  [{sc['badge']}]" if sc.get("badge") else "")
-          p0.font.name = font_name
+          p0.font.name = _resolve_el_font(sc.get("headStyles"), sc_font)
           p0.font.size = Pt(float((sc.get("headStyles") or {}).get("fontSizePt") or 11.0))
           p0.font.bold = True
           head_col_str = (sc.get("headStyles") or {}).get("color") or sc_st.get("color")
@@ -2033,7 +2129,7 @@ def build_slide_from_geometry(
           p_it = tf.paragraphs[0] if p_idx == 0 else tf.add_paragraph()
           use_bullet = len(sc_items) > 1 and not it.startswith(("•", "-", "1", "2", "3", "KPI"))
           p_it.text = f"• {it}" if use_bullet else it
-          p_it.font.name = font_name
+          p_it.font.name = sc_font
           p_it.font.size = Pt(float(sc_st.get("fontSizePt") or 9.5))
           p_it.font.color.rgb = parse_color_value(sc_st.get("color"), RGBColor(203, 213, 225) if is_dark else RGBColor(30, 41, 59))
           p_idx += 1
@@ -2095,6 +2191,7 @@ def build_slide_from_geometry(
         if not pr:
           continue
         p_st = para.get("styles", {})
+        p_font = _resolve_el_font(p_st, c_font)
         p_left_in = float(pr.get("left", r["left"] + 0.18))
         p_top_in = float(pr.get("top", (curr_top / 914400.0)))
         p_w_in = max(0.5, float(pr.get("width", r["width"] - 0.36)))
@@ -2121,7 +2218,7 @@ def build_slide_from_geometry(
           render_rich_runs_into_text_frame(
               tf,
               p_runs,
-              default_font=font_name,
+              default_font=p_font,
               default_size_pt=p_size,
               default_color_rgb=default_p_col,
               default_bold=bool(p_st.get("isBold")),
@@ -2132,7 +2229,7 @@ def build_slide_from_geometry(
         else:
           p = tf.paragraphs[0]
           p.text = f"• {raw_ptxt}" if use_bullet else raw_ptxt
-          p.font.name = "Consolas" if p_st.get("isCode") else font_name
+          p.font.name = p_font
           p.font.size = Pt(p_size)
           p.font.bold = bool(p_st.get("isBold"))
           p.font.color.rgb = default_p_col
@@ -2159,6 +2256,7 @@ def build_slide_from_geometry(
       tbl_copy["is_dark"] = is_dark
       tbl_copy["slide_bg_rgb"] = blend_rgb
       tbl_copy["skip_card_wrapper"] = bool(covered_by_card or not tbl.get("inCard"))
+      tbl_font = _resolve_el_font(tbl.get("styles"), font_name)
       build_styled_native_table(
           slide,
           tbl_copy,
@@ -2166,7 +2264,7 @@ def build_slide_from_geometry(
           Inches(t_top_in),
           Inches(t_w_in),
           Inches(t_h_in),
-          font_name=font_name,
+          font_name=tbl_font,
       )
 
   for ch in geom.get("charts", []):
@@ -2181,6 +2279,7 @@ def build_slide_from_geometry(
   for hl in geom.get("highlightBoxes", []):
     hl_r = hl.get("rect", {})
     hl_st = hl.get("styles", {})
+    hl_font = _resolve_el_font(hl_st, font_name)
     hl_left = float(hl_r.get("left", 0.65))
     hl_top = float(hl_r.get("top", 6.1))
     hl_w = float(hl_r.get("width", 12.0))
@@ -2247,7 +2346,7 @@ def build_slide_from_geometry(
       render_rich_runs_into_text_frame(
           tf,
           hl["runs"],
-          default_font=font_name,
+          default_font=hl_font,
           default_size_pt=hl_size,
           default_color_rgb=hl_fg,
           default_bold=bool(hl_st.get("isBold")),
@@ -2256,7 +2355,7 @@ def build_slide_from_geometry(
     else:
       p = tf.paragraphs[0]
       p.text = hl.get("text", "")
-      p.font.name = font_name
+      p.font.name = hl_font
       p.font.size = Pt(hl_size)
       p.font.bold = bool(hl_st.get("isBold", True))
       p.font.color.rgb = hl_fg
@@ -2297,7 +2396,7 @@ def build_slide_from_geometry(
     tf.margin_bottom = Inches(0.0)
     p = tf.paragraphs[0]
     p.text = fn.get("text", "")
-    p.font.name = font_name
+    p.font.name = _resolve_el_font(fn_st, font_name)
     p.font.size = Pt(float(fn_st.get("fontSizePt") or 10.0))
     p.font.bold = bool(fn_st.get("isBold"))
     p.font.color.rgb = parse_color_value(
@@ -2508,8 +2607,8 @@ def ensure_slide_typography_consistency(
       tf = shape.text_frame
       tf.word_wrap = True
       for p in tf.paragraphs:
-        if not p.font.name:
-          p.font.name = default_font
+        p_font_name = p.font.name or default_font
+        apply_multilingual_font(p.font, p_font_name, p.text)
         if not p.font.size:
           p.font.size = Pt(11.0)
         has_run_rgb = False
@@ -2530,8 +2629,8 @@ def ensure_slide_typography_consistency(
         except Exception:
           pass
         for run in p.runs:
-          if not run.font.name:
-            run.font.name = default_font
+          r_font_name = run.font.name or p_font_name or default_font
+          apply_multilingual_font(run.font, r_font_name, run.text)
           if not run.font.size:
             run.font.size = p.font.size
           if run.font.bold is None and p.font.bold is not None:
@@ -2546,8 +2645,8 @@ def ensure_slide_typography_consistency(
         for cell in row.cells:
           cell.text_frame.word_wrap = True
           for p in cell.text_frame.paragraphs:
-            if not p.font.name:
-              p.font.name = default_font
+            p_font_name = p.font.name or default_font
+            apply_multilingual_font(p.font, p_font_name, p.text)
             if not p.font.size:
               p.font.size = Pt(10.0)
             has_run_rgb = False
@@ -2568,8 +2667,8 @@ def ensure_slide_typography_consistency(
             except Exception:
               pass
             for run in p.runs:
-              if not run.font.name:
-                run.font.name = default_font
+              r_font_name = run.font.name or p_font_name or default_font
+              apply_multilingual_font(run.font, r_font_name, run.text)
               if not run.font.size:
                 run.font.size = p.font.size
               if run.font.bold is None and p.font.bold is not None:
@@ -2734,13 +2833,13 @@ def harmonize_deck_presentation_fidelity(
     for s in slide.shapes:
       if s.has_text_frame and not s.has_table:
         for p in s.text_frame.paragraphs:
-          if not p.font.name:
-            p.font.name = default_font
+          p_font_name = p.font.name or default_font
+          apply_multilingual_font(p.font, p_font_name, p.text)
           if not p.font.size:
             p.font.size = Pt(10.5)
           for r in p.runs:
-            if not r.font.name:
-              r.font.name = default_font
+            r_font_name = r.font.name or p_font_name or default_font
+            apply_multilingual_font(r.font, r_font_name, r.text)
             if not r.font.size:
               r.font.size = p.font.size
 
@@ -2756,6 +2855,8 @@ def build_native_slide_from_code(
     slide_index: int = 1,
 ) -> None:
   font_family = (design_tokens or {}).get("font_name", "Pretendard")
+  if font_family == "Pretendard" and (slide_geometry or {}).get("slideFontFamily"):
+    font_family = str(slide_geometry["slideFontFamily"]).strip() or font_family
   text_color_hex = (design_tokens or {}).get("text_main_hex", "#111115")
   default_text_color = _hex_to_pptx_color(text_color_hex, default=(17, 17, 21))
   brand_color = _hex_to_pptx_color((design_tokens or {}).get("brand_color_hex"), default=(37, 99, 235))
@@ -2829,6 +2930,7 @@ def build_native_slide_from_code(
       "apply_linear_gradient_fill": apply_linear_gradient_fill,
       "apply_drop_shadow": apply_drop_shadow,
       "apply_run_highlight": apply_run_highlight,
+      "apply_multilingual_font": apply_multilingual_font,
       "render_rich_runs_into_text_frame": render_rich_runs_into_text_frame,
       "build_svg_primitives": build_svg_primitives,
   }

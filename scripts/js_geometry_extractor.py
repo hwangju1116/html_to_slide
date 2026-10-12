@@ -181,6 +181,24 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
         return bg;
     };
 
+    const extractPrimaryFont = (cs) => {
+        if (!cs || !cs.fontFamily) return null;
+        const generic = new Set([
+            'sans-serif', 'serif', 'monospace', 'system-ui', '-apple-system',
+            'blinkmacsystemfont', 'ui-sans-serif', 'ui-serif', 'ui-monospace',
+            'cursive', 'fantasy', 'emoji', 'math', 'fangsong', 'inherit', 'initial', 'unset'
+        ]);
+        const parts = cs.fontFamily.split(',');
+        for (const raw of parts) {
+            const clean = raw.trim().replace(/^['"]+|['"]+$/g, '').trim();
+            if (!clean || clean.startsWith('var(')) continue;
+            if (!generic.has(clean.toLowerCase())) {
+                return clean;
+            }
+        }
+        return null;
+    };
+
     const isCodeElement = (el, cs) => {
         if (!el || !el.tagName) return false;
         const tag = el.tagName.toLowerCase();
@@ -213,6 +231,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
             gradient: grad,
             hasShadow: hasShadow,
             isCode: pseudo ? false : isCodeElement(el, cs),
+            fontFamily: extractPrimaryFont(cs),
             fontSizePt: scaledPt,
             fontWeight: cs.fontWeight,
             isBold: parseInt(cs.fontWeight) >= 600 || cs.fontWeight === 'bold',
@@ -330,6 +349,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
                     text: raw,
                     color: currSt.color,
                     bgColor: hasInlineBg ? elBg : null,
+                    fontFamily: currSt.fontFamily,
                     fontSizePt: currSt.fontSizePt,
                     isBold: runIsBold,
                     isCode: currSt.isCode,
@@ -360,7 +380,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
         if (runs.length > 0) {
             runs[runs.length - 1].text = runs[runs.length - 1].text.replace(/\\s+$/, '');
         }
-        const hasRichFormatting = runs.length > 1 || runs.some(r => r.bgColor || r.isCode || r.isBadge || r.newline || r.isBold !== rootIsBold || r.color !== rootSt.color || r.fontSizePt !== rootSt.fontSizePt);
+        const hasRichFormatting = runs.length > 1 || runs.some(r => r.bgColor || r.isCode || r.isBadge || r.newline || r.isBold !== rootIsBold || r.color !== rootSt.color || r.fontSizePt !== rootSt.fontSizePt || (r.fontFamily && r.fontFamily !== rootSt.fontFamily));
         return hasRichFormatting ? runs : null;
     };
 
@@ -1235,6 +1255,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
                 text: th.innerText.trim(),
                 color: st.color,
                 bgColor: thBg && thBg !== 'transparent' && thBg !== 'rgba(0, 0, 0, 0)' ? thBg : null,
+                fontFamily: st.fontFamily,
                 fontWeight: st.fontWeight,
                 fontSizePt: st.fontSizePt
             });
@@ -1274,6 +1295,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
                     text: td.innerText.trim(),
                     color: st.color,
                     bgColor: cellBg,
+                    fontFamily: st.fontFamily,
                     fontSizePt: st.fontSizePt,
                     is_bold: parseInt(st.fontWeight) >= 600 || st.fontWeight === 'bold',
                     has_badge: onlyBadge,
@@ -1366,6 +1388,7 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
 
     return {
         id: targetId,
+        slideFontFamily: extractPrimaryFont(sCs),
         slideBgColor: slideBg,
         slideBgGradient: slideBgGradient,
         headerBadges: headerBadges,

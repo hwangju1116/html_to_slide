@@ -333,6 +333,36 @@ def _prepare_slide_html(
         font-weight: 900;
         src: local('Noto Sans KR Black'), local('Noto Sans CJK KR Black'), local('Noto Sans Korean Black'){black_url}, local('Pretendard Black'), local('Apple SD Gothic Neo Bold'), local('Malgun Gothic Bold');
     }}
+    @font-face {{
+        font-family: 'Inter';
+        font-weight: 400;
+        src: local('Inter'), local('Inter Regular'), local('Pretendard'), local('Pretendard Regular'){p_reg_url};
+    }}
+    @font-face {{
+        font-family: 'Inter';
+        font-weight: 500;
+        src: local('Inter Medium'), local('Pretendard Medium'){p_med_url};
+    }}
+    @font-face {{
+        font-family: 'Inter';
+        font-weight: 600;
+        src: local('Inter SemiBold'), local('Pretendard SemiBold'){p_semi_url};
+    }}
+    @font-face {{
+        font-family: 'Inter';
+        font-weight: 700;
+        src: local('Inter Bold'), local('Pretendard Bold'){p_bold_url};
+    }}
+    @font-face {{
+        font-family: 'Inter';
+        font-weight: 800;
+        src: local('Inter ExtraBold'), local('Pretendard ExtraBold'){p_xbold_url};
+    }}
+    @font-face {{
+        font-family: 'Inter';
+        font-weight: 900;
+        src: local('Inter Black'), local('Pretendard Black'){p_black_url};
+    }}
     """
 
   custom_css = f"""
@@ -345,13 +375,16 @@ def _prepare_slide_html(
         transition-delay: 0s !important;
     }}
 
+    :where(html, body) {{
+        font-family: 'Pretendard', 'Noto Sans KR', 'Noto Sans CJK KR', 'Noto Sans Korean', 'Apple SD Gothic Neo', 'Malgun Gothic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }}
+
     html, body {{
         width: 1920px !important;
         height: 1080px !important;
         margin: 0 !important;
         padding: 0 !important;
         overflow: hidden !important;
-        font-family: 'Pretendard', 'Noto Sans KR', 'Noto Sans CJK KR', 'Noto Sans Korean', 'Apple SD Gothic Neo', 'Malgun Gothic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         -webkit-font-smoothing: antialiased;
     }}
     header:not(.slide-header), footer:not(.slide-footer), nav, [role="navigation"], .chrome, .tabs, .stage-controls, .controls-footer, div:not(.slide):not(:has(#{target_slide_id})):has(> button), div:not(.slide):not(:has(#{target_slide_id})):has(> div > button) {{
