@@ -175,7 +175,7 @@ def extract_global_design_tokens(
             r"@font-face\s*\{[^}]*\}", "", raw_html, flags=re.IGNORECASE | re.DOTALL
         )
         font_match = re.search(
-            r"(?:body|html|\.slide(?:-container|-view|-canvas)?)\s*\{[^}]*font-family\s*:\s*([^;\}]+)",
+            r"(?<![\w.#-])(?:body|html|\.slide(?:-container|-view|-canvas)?)(?![\w-])\s*\{[^}]*font-family\s*:\s*([^;\}]+)",
             html_no_fontface,
             re.IGNORECASE | re.DOTALL,
         )
@@ -198,16 +198,27 @@ def extract_global_design_tokens(
         font_resolved = False
         if font_match:
             raw_font_val = font_match.group(1).strip()
-            m_font_var = re.search(r"var\(\s*(--[a-zA-Z0-9_-]+)\s*\)", raw_font_val)
-            if m_font_var and m_font_var.group(1) in css_vars:
-                raw_font_val = css_vars[m_font_var.group(1)]
+            for _ in range(4):
+                m_font_var = re.search(
+                    r"var\(\s*(--[a-zA-Z0-9_-]+)\s*(?:,\s*([^)]+))?\)", raw_font_val
+                )
+                if not m_font_var:
+                    break
+                var_name = m_font_var.group(1).strip()
+                var_fallback = (m_font_var.group(2) or "").strip()
+                resolved_val = css_vars.get(var_name, var_fallback)
+                raw_font_val = (
+                    raw_font_val[: m_font_var.start()]
+                    + resolved_val
+                    + raw_font_val[m_font_var.end() :]
+                )
             raw_families = [
                 f.strip().strip("'\"")
                 for f in raw_font_val.split(",")
                 if f.strip()
             ]
             for fam in raw_families:
-                if fam.lower() not in generic_families and not fam.startswith("var("):
+                if fam and fam.lower() not in generic_families and not fam.startswith("var("):
                     tokens["font_name"] = fam
                     font_resolved = True
                     break
@@ -216,6 +227,15 @@ def extract_global_design_tokens(
             dom_ff = str(first_slide_geometry["slideFontFamily"]).strip()
             if dom_ff and dom_ff.lower() not in generic_families:
                 tokens["font_name"] = dom_ff
+                font_resolved = True
+
+        if not font_resolved:
+            m_lang = re.search(r'<html[^>]*\blang=["\']([^"\']+)["\']', raw_html, re.IGNORECASE)
+            lang_code = (m_lang.group(1).strip().lower() if m_lang else "")
+            if lang_code.startswith("ja"):
+                tokens["font_name"] = "Yu Gothic"
+            elif lang_code.startswith("zh"):
+                tokens["font_name"] = "Microsoft YaHei"
 
     if first_slide_geometry and first_slide_geometry.get("slideBgColor"):
         measured_bg = parse_color_value(first_slide_geometry["slideBgColor"], default=None)

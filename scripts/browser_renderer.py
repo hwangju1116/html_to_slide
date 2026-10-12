@@ -365,6 +365,24 @@ def _prepare_slide_html(
     }}
     """
 
+  m_lang = re.search(r'<html[^>]*\blang=["\']([^"\']+)["\']', html, re.IGNORECASE)
+  lang_code = m_lang.group(1).strip().lower() if m_lang else ""
+  if lang_code.startswith("ja"):
+    default_font_chain = (
+        "'Yu Gothic', 'Noto Sans JP', 'Noto Sans CJK JP', 'Hiragino Sans', "
+        "'Meiryo', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    )
+  elif lang_code.startswith("zh"):
+    default_font_chain = (
+        "'Microsoft YaHei', 'Noto Sans SC', 'Noto Sans CJK SC', 'PingFang SC', "
+        "'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    )
+  else:
+    default_font_chain = (
+        "'Pretendard', 'Noto Sans KR', 'Noto Sans CJK KR', 'Noto Sans Korean', "
+        "'Apple SD Gothic Neo', 'Malgun Gothic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    )
+
   custom_css = f"""
     {font_face_css}
 
@@ -376,7 +394,7 @@ def _prepare_slide_html(
     }}
 
     :where(html, body) {{
-        font-family: 'Pretendard', 'Noto Sans KR', 'Noto Sans CJK KR', 'Noto Sans Korean', 'Apple SD Gothic Neo', 'Malgun Gothic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-family: {default_font_chain};
     }}
 
     html, body {{

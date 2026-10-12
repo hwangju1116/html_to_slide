@@ -6,10 +6,13 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from xml.sax.saxutils import quoteattr
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.oxml import parse_xml
+from pptx.oxml.ns import nsdecls, qn
 from pptx.util import Inches, Pt
 
 SKILL_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -23,9 +26,6 @@ from scripts.color_utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-from pptx.oxml import parse_xml
-from pptx.oxml.ns import nsdecls, qn
 
 _SPPR_AFTER_FILL_TAGS = {
     qn("a:ln"),
@@ -44,8 +44,6 @@ _SPPR_FILL_TAGS = {
     qn("a:pattFill"),
     qn("a:grpFill"),
 }
-
-from xml.sax.saxutils import quoteattr
 
 _RPR_AFTER_HIGHLIGHT_TAGS = {
     qn("a:uLnTx"),
@@ -70,29 +68,91 @@ _RPR_AFTER_FONT_TAGS = {
     qn("a:extLst"),
 }
 
-_LATIN_ONLY_FONTS = {
-    "inter",
-    "roboto",
-    "montserrat",
-    "arial",
-    "helvetica",
-    "georgia",
-    "times new roman",
-    "courier new",
+_CJK_FONT_KEYWORDS = (
+    "pretendard",
+    "noto sans kr",
+    "noto sans jp",
+    "noto sans sc",
+    "noto sans tc",
+    "noto sans cjk",
+    "noto serif kr",
+    "noto serif jp",
+    "noto serif sc",
+    "noto serif tc",
+    "noto serif cjk",
+    "malgun",
+    "맑은 고딕",
+    "apple sd gothic",
+    "nanum",
+    "나눔",
+    "spoqa",
+    "suit",
+    "wanted sans",
+    "gmarket",
+    "kopub",
+    "batang",
+    "바탕",
+    "dotum",
+    "돋움",
+    "gulim",
+    "굴림",
+    "yu gothic",
+    "yu mincho",
+    "yugothic",
+    "yumincho",
+    "meiryo",
+    "hiragino",
+    "ms pgothic",
+    "ms mincho",
+    "biz udp",
+    "microsoft yahei",
+    "microsoft jhenghei",
+    "pingfang",
+    "simsun",
+    "simhei",
+    "kaiti",
+    "fangsong",
+    "source han",
+)
+
+_MONOSPACE_FONT_KEYWORDS = (
+    "mono",
+    "code",
     "consolas",
-    "poppins",
-    "open sans",
-    "lato",
-    "plus jakarta sans",
-    "segoe ui",
-    "sf pro display",
-    "sf pro text",
-    "playfair display",
-    "merriweather",
-    "fira code",
-    "jetbrains mono",
-    "ubuntu",
-}
+    "courier",
+    "menlo",
+    "monaco",
+    "d2coding",
+    "inconsolata",
+    "hack",
+    "iosevka",
+    "lucida console",
+)
+
+
+def _is_cjk_font(font_name: str) -> bool:
+  low = (font_name or "").strip().lower()
+  if not low:
+    return False
+  return any(kw in low for kw in _CJK_FONT_KEYWORDS)
+
+
+def _is_monospace_font(font_name: str) -> bool:
+  low = (font_name or "").strip().lower()
+  if not low:
+    return False
+  return any(kw in low for kw in _MONOSPACE_FONT_KEYWORDS)
+
+
+def _detect_ea_font(text: str, default_ea: str = "Pretendard") -> str:
+  if text:
+    if re.search(r"[\uAC00-\uD7A3\u3130-\u318F\u1100-\u11FF]", text):
+      return "Pretendard"
+    if re.search(r"[\u3040-\u30FF\u31F0-\u31FF\uFF65-\uFF9F]", text):
+      return "Yu Gothic"
+    if re.search(r"[\u4E00-\u9FFF\u3400-\u4DBF]", text):
+      return "Microsoft YaHei"
+  return default_ea
 
 
 def apply_multilingual_font(
@@ -104,7 +164,12 @@ def apply_multilingual_font(
     return
   try:
     font_obj.name = font_name
-    ea_font = "Pretendard" if font_name.strip().lower() in _LATIN_ONLY_FONTS else font_name
+    if _is_cjk_font(font_name):
+      ea_font = font_name
+      cs_font = font_name
+    else:
+      ea_font = _detect_ea_font(text_sample, default_ea="Pretendard")
+      cs_font = "Arial"
     rPr = font_obj._element
     for ch in list(rPr):
       if ch.tag in (qn("a:ea"), qn("a:cs")):
@@ -118,7 +183,7 @@ def apply_multilingual_font(
         insert_idx = idx
         break
     ea_el = parse_xml(f'<a:ea {nsdecls("a")} typeface={quoteattr(ea_font)}/>')
-    cs_el = parse_xml(f'<a:cs {nsdecls("a")} typeface={quoteattr(font_name)}/>')
+    cs_el = parse_xml(f'<a:cs {nsdecls("a")} typeface={quoteattr(cs_font)}/>')
     rPr.insert(insert_idx, cs_el)
     rPr.insert(insert_idx, ea_el)
   except Exception as e:
@@ -133,7 +198,9 @@ def _resolve_el_font(
     return fallback_font
   ff = str(styles.get("fontFamily") or "").strip()
   if styles.get("isCode"):
-    return ff if (ff and ff != fallback_font) else "Consolas"
+    if ff and (_is_monospace_font(ff) or ff != fallback_font):
+      return ff
+    return "Consolas"
   if ff:
     return ff
   return fallback_font
@@ -317,7 +384,7 @@ def render_rich_runs_into_text_frame(
       run.text = core_txt if has_hl else raw_txt
     raw_r_ff = str(r_item.get("fontFamily") or "").strip()
     if is_code:
-      r_font = raw_r_ff if (raw_r_ff and raw_r_ff != default_font) else "Consolas"
+      r_font = raw_r_ff if (raw_r_ff and (_is_monospace_font(raw_r_ff) or raw_r_ff != default_font)) else "Consolas"
     else:
       r_font = raw_r_ff or default_font
     apply_multilingual_font(run.font, r_font, run.text)
