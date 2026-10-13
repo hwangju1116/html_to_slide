@@ -23,15 +23,25 @@ html-to-pptx/
 │   ├── browser_renderer.py                   # Headless Chrome 1920x1080 CDP live DOM geometry & screenshot engine
 │   ├── js_geometry_extractor.py              # Live DOM bounding-box & computed-style extractor
 │   ├── pptx_native_builders.py               # Native python-pptx shape/table/chart builders & collision resolver
-│   └── color_utils.py                        # CSS variable & RGBA alpha-blending parser
+│   ├── color_utils.py                        # CSS variable & RGBA alpha-blending parser
+│   └── font_provisioning.py                  # CJK fallback fonts (bundled → ~/.cache → system → Google Fonts download) & offline JS assets
 ├── references/
 │   ├── html_slide_authoring_guide.md         # 16:9 HTML/CSS semantic rules for image-to-slide digitization
 │   └── cli_and_architecture.md               # Detailed CLI options, Host AI custom builder hook, and troubleshooting
-└── assets/
+└── assets/                                   # Optional. If absent, files are fetched once into ~/.cache/html_to_slide/
     ├── fonts/                                # Bundled NotoSansKR fallback fonts
     ├── chart.min.js                          # Offline Chart.js bundle
     └── tailwindcss.min.js                    # Offline Tailwind CSS bundle
 ```
+
+---
+
+## Fonts & Offline Assets (works without `assets/`)
+
+The renderer guarantees Korean/Japanese/Chinese glyphs on any machine, regardless of the HTML's `font-family` stack (e.g. `Inter`, `Roboto`, `var(--font-sans)`): every `font-family` declaration is suffixed with `unicode-range`-scoped fallback families (`HTS CJK KR/JP/SC`), so Latin glyphs keep the author's font while CJK glyphs come from Noto Sans. Fallback font files are resolved in order: `SKILL_DIR/assets/fonts/` → `~/.cache/html_to_slide/fonts/` → system fonts (`fc-list :lang=ko|ja|zh-cn`) → one-time download from Google Fonts (OFL). `tailwindcss.min.js` / `chart.min.js` follow the same order (CDN `<script>` is kept if nothing local is available).
+
+- The CLI JSON result includes `font_fallback` (`source` per script + `warnings`). If `warnings` is non-empty, tell the user to run `sudo apt install fonts-noto-cjk` (Linux) or allow network access once.
+- Env vars: `HTML_TO_SLIDE_CACHE_DIR` (override cache dir), `HTML_TO_SLIDE_OFFLINE=1` (never download).
 
 ---
 

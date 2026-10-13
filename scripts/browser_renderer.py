@@ -20,6 +20,13 @@ if SKILL_ROOT not in sys.path:
   sys.path.insert(0, SKILL_ROOT)
 
 from scripts.js_geometry_extractor import JS_SLIDE_GEOMETRY_EXTRACTOR
+from scripts.font_provisioning import (
+    JS_APPLY_CJK_FALLBACK,
+    CJK_FALLBACK_SUFFIX,
+    append_cjk_fallback_to_font_families,
+    build_cjk_fallback_font_face_css,
+    resolve_js_asset,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,21 +127,27 @@ def _prepare_slide_html(
   html = re.sub(
       r'<link[^>]*rel=["\']preconnect["\'][^>]*>', "", html, flags=re.IGNORECASE
   )
-  local_tailwind = os.path.abspath(
-      os.path.join(os.path.dirname(__file__), "..", "assets", "tailwindcss.min.js")
-  )
-  if os.path.exists(local_tailwind):
+  local_tailwind = resolve_js_asset("tailwindcss.min.js")
+  tailwind_cdn_re = r'<script[^>]*src=["\']https?://[^"\']*(?:tailwindcss|tailwind)[^"\']*["\'][^>]*>\s*</script>'
+  if local_tailwind:
     html = re.sub(
-        r'<script[^>]*src=["\']https?://[^"\']*(?:tailwindcss|tailwind)[^"\']*["\'][^>]*>\s*</script>',
+        tailwind_cdn_re,
         f'<script src="file://{local_tailwind}"></script>',
         html,
         flags=re.IGNORECASE,
     )
-  local_chartjs = os.path.abspath(
-      os.path.join(os.path.dirname(__file__), "..", "assets", "chart.min.js")
-  )
+  else:
+    html = re.sub(
+        tailwind_cdn_re,
+        lambda m: m.group(0).replace("<script", "<script data-hts-keep=\"1\"", 1),
+        html,
+        flags=re.IGNORECASE,
+    )
+  local_chartjs = resolve_js_asset("chart.min.js")
+  chart_cdn_re = r'<script[^>]*src=["\']https?://[^"\']*chart(?:\.umd|\.min)?(?:\.js)?[^"\']*["\'][^>]*>\s*</script>'
+  chart_src = f"file://{local_chartjs}" if local_chartjs else "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
   chart_shim = (
-      f'<script src="file://{local_chartjs}"></script>\n'
+      f'<script data-hts-keep="1" src="{chart_src}"></script>\n'
       "<script>\n"
       "if (window.Chart) {\n"
       "  Chart.defaults.animation = false;\n"
@@ -158,15 +171,9 @@ def _prepare_slide_html(
       "}\n"
       "</script>"
   )
-  if os.path.exists(local_chartjs):
-    html = re.sub(
-        r'<script[^>]*src=["\']https?://[^"\']*chart(?:\.umd|\.min)?(?:\.js)?[^"\']*["\'][^>]*>\s*</script>',
-        chart_shim,
-        html,
-        flags=re.IGNORECASE,
-    )
+  html = re.sub(chart_cdn_re, chart_shim, html, flags=re.IGNORECASE)
   html = re.sub(
-      r'<script[^>]*src=["\']https?://[^"\']*["\'][^>]*>\s*</script>',
+      r'<script(?![^>]*data-hts-keep)[^>]*src=["\']https?://[^"\']*["\'][^>]*>\s*</script>',
       "",
       html,
       flags=re.IGNORECASE,
@@ -383,8 +390,14 @@ def _prepare_slide_html(
         "'Apple SD Gothic Neo', 'Malgun Gothic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
     )
 
+  cjk_fallback_css, cjk_report = build_cjk_fallback_font_face_css(html)
+  logger.info("CJK fallback fonts: %s", cjk_report)
+  html = append_cjk_fallback_to_font_families(html)
+  default_font_chain = default_font_chain + CJK_FALLBACK_SUFFIX
+
   custom_css = f"""
     {font_face_css}
+    {cjk_fallback_css}
 
     *, *::before, *::after {{
         animation-duration: 0s !important;
@@ -587,6 +600,29 @@ async def _extract_slides_cdp(
         )
       except Exception:
         await asyncio.sleep(0.2)
+
+      try:
+        await send_recv(
+            "Runtime.evaluate",
+            {"expression": JS_APPLY_CJK_FALLBACK, "returnByValue": True},
+            timeout=3.0,
+        )
+        await send_recv(
+            "Runtime.evaluate",
+            {
+                "expression": (
+                    "Promise.race(["
+                    "  document.fonts ? document.fonts.ready : Promise.resolve(),"
+                    "  new Promise(r => setTimeout(r, 350))"
+                    "])"
+                ),
+                "awaitPromise": True,
+                "returnByValue": True,
+            },
+            timeout=2.0,
+        )
+      except Exception as cjk_err:
+        logger.debug("CJK fallback JS pass skipped: %s", cjk_err)
 
       await asyncio.sleep(0.1)
 

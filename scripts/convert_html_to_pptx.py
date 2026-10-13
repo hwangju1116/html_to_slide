@@ -28,6 +28,7 @@ from scripts.browser_renderer import (
     _tag_slide_ids_in_html,
     extract_html_slides_geometry,
 )
+import scripts.font_provisioning as _font_provisioning
 from scripts.color_utils import (
     extract_global_design_tokens,
     extract_root_css_vars,
@@ -578,6 +579,7 @@ def prepare_html_for_host_ai(
         "screenshot_paths": screenshot_paths,
         "manifest_path": manifest_path,
         "geometry_json_path": geom_json_path,
+        "font_fallback": _font_provisioning.LAST_FONT_REPORT,
     }
 
 
@@ -676,6 +678,7 @@ def convert_html_to_pptx(
         "slide_ids": slide_ids,
         "output_pptx_path": output_pptx_path,
         "file_size_bytes": file_size,
+        "font_fallback": _font_provisioning.LAST_FONT_REPORT,
     }
 
 

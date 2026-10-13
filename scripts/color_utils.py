@@ -194,6 +194,9 @@ def extract_global_design_tokens(
             "inherit",
             "initial",
             "unset",
+            "hts cjk kr",
+            "hts cjk jp",
+            "hts cjk sc",
         }
         font_resolved = False
         if font_match:

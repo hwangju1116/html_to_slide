@@ -186,7 +186,8 @@ JS_SLIDE_GEOMETRY_EXTRACTOR: Final[str] = """
         const generic = new Set([
             'sans-serif', 'serif', 'monospace', 'system-ui', '-apple-system',
             'blinkmacsystemfont', 'ui-sans-serif', 'ui-serif', 'ui-monospace',
-            'cursive', 'fantasy', 'emoji', 'math', 'fangsong', 'inherit', 'initial', 'unset'
+            'cursive', 'fantasy', 'emoji', 'math', 'fangsong', 'inherit', 'initial', 'unset',
+            'hts cjk kr', 'hts cjk jp', 'hts cjk sc'
         ]);
         const parts = cs.fontFamily.split(',');
         for (const raw of parts) {
